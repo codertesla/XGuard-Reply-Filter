@@ -51,3 +51,7 @@ https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/lists/comm
 ## 注意
 
 公开列表可能带来误杀风险。遇到误伤时，可以先停用远程订阅，或把相关关键词从订阅列表中移除。
+
+## 许可证
+
+MIT
