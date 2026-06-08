@@ -62,6 +62,7 @@ https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/lists/comm
 - 本地规则可以直接在文本框中编辑，每行一条
 - 远程订阅 URL 可以每行添加一个
 - 点击「立即更新远程规则」可手动刷新缓存
+- 点击「查看过滤统计」可直接查看当前页隐藏数和本次会话命中数
 - `Ctrl/Cmd + Enter` 可快速保存设置
 - 面板关闭前会提示未保存更改；占位模式下可点击隐藏提示临时展开单条回复
 
