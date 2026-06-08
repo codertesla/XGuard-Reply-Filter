@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.3.0
+// @version      1.3.1
 // @description  按用户名、显示名关键词、评论内容关键词隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -195,6 +195,7 @@
 
   function registerMenu() {
     GM_registerMenuCommand("打开过滤设置", openSettingsPanel);
+    GM_registerMenuCommand("查看过滤统计", showStatsSummary);
 
     GM_registerMenuCommand("启用/停用过滤", () => {
       const enabled = !settings.enabled;
@@ -217,6 +218,26 @@
         saveSettings({ ...DEFAULT_SETTINGS });
       }
     });
+  }
+
+  function showStatsSummary() {
+    clearTimeout(scanTimer);
+    fullScanRequested = true;
+    scanPendingArticles();
+    const pageStats = collectPageStats();
+    const ruleCount = compiledRules.blockedHandles.size
+      + compiledRules.blockedNameKeywords.length
+      + compiledRules.blockedTextKeywords.length;
+
+    alert([
+      "XGuard 过滤统计",
+      "",
+      `当前页隐藏：${pageStats.total}（${formatHitBreakdown(pageStats.byType)}）`,
+      `本次会话命中：${sessionStats.hidden}（${formatHitBreakdown(sessionStats.byType)}）`,
+      `启用规则：${ruleCount}`,
+      `扫描文章：${sessionStats.scanned}`,
+      `跳过文章：${sessionStats.skipped}`,
+    ].join("\n"));
   }
 
   function openSettingsPanel() {
