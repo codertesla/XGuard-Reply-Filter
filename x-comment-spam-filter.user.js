@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         XGuard 评论净化器
+// @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.2.0
+// @version      1.2.1
 // @description  按用户名、显示名关键词、评论内容关键词隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @match        https://x.com/*
@@ -11,7 +11,6 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
 // @connect      raw.githubusercontent.com
-// @connect      *
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -69,7 +68,7 @@
     },
   };
 
-  const PLACEHOLDER_TEXT = "已由 XGuard 评论净化器隐藏";
+  const PLACEHOLDER_TEXT = "已由 XGuard 推特评论净化器隐藏";
   let settings = loadSettings();
   let effectiveRules = buildEffectiveRules(settings);
   let scanTimer = 0;
@@ -165,7 +164,7 @@
     GM_registerMenuCommand("启用/停用过滤", () => {
       const enabled = !settings.enabled;
       saveSettings({ ...settings, enabled });
-      alert(`XGuard 评论净化器：已${enabled ? "启用" : "停用"}`);
+      alert(`XGuard 推特评论净化器：已${enabled ? "启用" : "停用"}`);
     });
 
     GM_registerMenuCommand("切换隐藏模式", () => {
@@ -191,10 +190,10 @@
     const overlay = document.createElement("div");
     overlay.className = "xcsf-overlay";
     overlay.innerHTML = `
-      <div class="xcsf-panel" role="dialog" aria-modal="true" aria-label="XGuard 评论净化器设置">
+      <div class="xcsf-panel" role="dialog" aria-modal="true" aria-label="XGuard 推特评论净化器设置">
         <div class="xcsf-header">
           <div>
-            <div class="xcsf-title">XGuard 评论净化器</div>
+            <div class="xcsf-title">XGuard 推特评论净化器</div>
             <div class="xcsf-subtitle">本地规则每行一条；远程订阅支持多个 URL，每行一个。</div>
           </div>
           <button class="xcsf-icon-button" type="button" data-action="close" aria-label="关闭">×</button>
