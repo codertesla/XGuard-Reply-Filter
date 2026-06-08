@@ -1,6 +1,7 @@
 # XGuard Reply Filter - reply text keywords
 # One keyword per line. Lines starting with # are ignored.
 
+# Chinese adult-service spam patterns
 线下
 丄门
 上门
@@ -8,5 +9,50 @@
 约
 私信
 电报
+飞机群
+电报群
+tg群
+加我
+私聊
+同城约
+可约
+接单
+裸聊
+私房
+外围
+援交
+约炮
+
+# Social / link bait patterns seen in public GitHub muted-word lists
 telegram
 whatsapp
+discord.io/
+sign up
+Link:
+link in bio
+link in my bio
+check bio
+I N B I O
+ＩＮ ＢＩＯ
+onlyfans
+fansly
+
+# Crypto spam patterns from public Twitter/X blocklist policies and muted-word lists
+bitcoin
+dogecoin
+FTX
+airdrop
+air drop
+claim airdrop
+free mint
+pump.fun
+.pump
+memecoin
+degen
+BNB
+XBT
+contract address
+wallet address
+合约地址
+钱包地址
+领空投

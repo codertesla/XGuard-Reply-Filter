@@ -1,7 +1,22 @@
 # XGuard Reply Filter - display name keywords
 # One keyword per line. Lines starting with # are ignored.
 
+# Chinese adult-service spam patterns
 线下
 丄门
 上门
 喝茶
+外围
+援交
+约炮
+同城约
+裸聊
+私房
+
+# Crypto / giveaway spam identity markers
+airdrop
+crypto
+degen
+memecoin
+onlyfans
+fansly
