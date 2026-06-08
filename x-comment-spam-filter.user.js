@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.2.2
+// @version      1.2.3
 // @description  按用户名、显示名关键词、评论内容关键词隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -30,26 +30,9 @@
     skipMainTweetOnStatusPage: true,
     remoteRulesEnabled: true,
     remoteUpdateIntervalHours: 12,
-    blockedHandles: [
-      "@Joeyce_x2",
-    ],
-    blockedNameKeywords: [
-      "线下",
-      "丄门",
-      "上门",
-      "喝茶",
-    ],
-    blockedTextKeywords: [
-      "线下",
-      "丄门",
-      "上门",
-      "喝茶",
-      "约",
-      "私信",
-      "电报",
-      "telegram",
-      "whatsapp",
-    ],
+    blockedHandles: [],
+    blockedNameKeywords: [],
+    blockedTextKeywords: [],
     remoteHandleUrls: [
       `${DEFAULT_RAW_BASE}/lists/handles.txt`,
     ],
@@ -231,7 +214,13 @@
           </label>
         </div>
 
-        <div class="xcsf-status" data-field="remoteStatus"></div>
+        <div class="xcsf-status">
+          <span data-field="remoteStatus"></span>
+          <div class="xcsf-status-actions">
+            <button type="button" data-action="dedupe-local">清理重复本地规则</button>
+            <button type="button" data-action="update-remote">立即更新</button>
+          </div>
+        </div>
 
         <label class="xcsf-field">
           <span>本地屏蔽 @用户名</span>
@@ -252,19 +241,16 @@
           <summary>远程订阅列表 URL</summary>
           <label class="xcsf-field xcsf-nested-field">
             <span>远程 @用户名列表 URL</span>
-            <textarea data-field="remoteHandleUrls" spellcheck="false"></textarea>
+            <textarea data-field="remoteHandleUrls" spellcheck="false" rows="2"></textarea>
           </label>
           <label class="xcsf-field xcsf-nested-field">
             <span>远程显示名关键词列表 URL</span>
-            <textarea data-field="remoteNameKeywordUrls" spellcheck="false"></textarea>
+            <textarea data-field="remoteNameKeywordUrls" spellcheck="false" rows="2"></textarea>
           </label>
           <label class="xcsf-field xcsf-nested-field">
             <span>远程评论关键词列表 URL</span>
-            <textarea data-field="remoteTextKeywordUrls" spellcheck="false"></textarea>
+            <textarea data-field="remoteTextKeywordUrls" spellcheck="false" rows="2"></textarea>
           </label>
-          <div class="xcsf-row">
-            <button type="button" data-action="update-remote">立即更新远程规则</button>
-          </div>
         </details>
 
         <details class="xcsf-json">
@@ -322,6 +308,7 @@
       if (action === "save") saveFromPanel(overlay);
       if (action === "reset") resetPanelFields(overlay);
       if (action === "update-remote") updateRemoteFromPanel(overlay);
+      if (action === "dedupe-local") dedupeLocalRulesFromPanel(overlay);
       if (action === "refresh-json") {
         getPanelFields(overlay).jsonRules.value = JSON.stringify(readSettingsFromPanel(overlay), null, 2);
       }
@@ -418,6 +405,44 @@
       fields.remoteStatus.textContent = formatRemoteStatus();
       fields.jsonRules.value = JSON.stringify(settings, null, 2);
     }
+  }
+
+  function dedupeLocalRulesFromPanel(root) {
+    const fields = getPanelFields(root);
+    const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
+    const result = {
+      handles: removeDuplicates(parseList(fields.blockedHandles.value), cache.blockedHandles),
+      names: removeDuplicates(parseList(fields.blockedNameKeywords.value), cache.blockedNameKeywords),
+      texts: removeDuplicates(parseList(fields.blockedTextKeywords.value), cache.blockedTextKeywords),
+    };
+    const removedCount = result.handles.removed + result.names.removed + result.texts.removed;
+
+    fields.blockedHandles.value = result.handles.items.join("\n");
+    fields.blockedNameKeywords.value = result.names.items.join("\n");
+    fields.blockedTextKeywords.value = result.texts.items.join("\n");
+    fields.jsonRules.value = JSON.stringify(readSettingsFromPanel(root), null, 2);
+
+    if (removedCount) {
+      fields.remoteStatus.textContent = `已移除 ${removedCount} 条与远程缓存重复的本地规则，点击“保存规则”后生效。`;
+    } else {
+      fields.remoteStatus.textContent = "未发现与远程缓存重复的本地规则。";
+    }
+  }
+
+  function removeDuplicates(localItems, remoteItems) {
+    const remoteSet = new Set(normalizeList(remoteItems).map(normalizeText));
+    const items = [];
+    let removed = 0;
+
+    for (const item of normalizeList(localItems)) {
+      if (remoteSet.has(normalizeText(item))) {
+        removed += 1;
+        continue;
+      }
+      items.push(item);
+    }
+
+    return { items, removed };
   }
 
   function parseList(value) {
@@ -783,7 +808,7 @@
       .xcsf-header,
       .xcsf-footer {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 12px;
         padding: 16px;
@@ -818,6 +843,10 @@
       }
 
       .xcsf-status {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
         padding: 10px 12px;
         border: 1px solid rgb(47, 51, 54);
         border-radius: 6px;
@@ -825,6 +854,11 @@
         color: rgb(139, 152, 165);
         font-size: 14px;
         line-height: 1.45;
+      }
+
+      .xcsf-status > span {
+        min-width: 0;
+        flex: 1;
       }
 
       .xcsf-controls {
@@ -886,7 +920,8 @@
       }
 
       .xcsf-row,
-      .xcsf-footer-main {
+      .xcsf-footer-main,
+      .xcsf-status-actions {
         display: flex;
         justify-content: flex-end;
         gap: 8px;
@@ -894,6 +929,10 @@
 
       .xcsf-nested-field {
         margin: 10px 0 0;
+      }
+
+      .xcsf-nested-field textarea {
+        min-height: 58px;
       }
 
       .xcsf-panel button {
@@ -919,9 +958,12 @@
       }
 
       .xcsf-icon-button {
-        width: 36px;
+        flex: 0 0 auto;
+        width: 42px;
+        min-height: 42px !important;
         padding: 0 !important;
-        font-size: 24px !important;
+        border-radius: 8px !important;
+        font-size: 28px !important;
         line-height: 1 !important;
       }
 
@@ -934,6 +976,8 @@
         .xcsf-header,
         .xcsf-footer,
         .xcsf-footer-main,
+        .xcsf-status,
+        .xcsf-status-actions,
         .xcsf-select-label {
           align-items: stretch;
           flex-direction: column;
