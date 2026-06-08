@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.2.4
+// @version      1.3.0
 // @description  按用户名、显示名关键词、评论内容关键词隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -24,6 +24,8 @@
   const SCANNED_ATTR = "data-xcsf-scanned";
   const HIDDEN_ATTR = "data-xcsf-hidden";
   const MAIN_TWEET_ATTR = "data-xcsf-main-tweet";
+  const REASON_ATTR = "data-xcsf-reason";
+  const REASON_TYPE_ATTR = "data-xcsf-reason-type";
   const DEFAULT_RAW_BASE = "https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main";
 
   const DEFAULT_SETTINGS = {
@@ -57,13 +59,20 @@
   const PLACEHOLDER_TEXT = "已由 XGuard 推特评论净化器隐藏";
   let settings = loadSettings();
   let effectiveRules = buildEffectiveRules(settings);
+  let compiledRules = compileRules(effectiveRules, settings);
   let scanTimer = 0;
+  let pendingArticles = new Set();
+  let fullScanRequested = false;
   let currentPath = location.pathname;
+  let currentMainTweetArticle = null;
+  let activePanel = null;
+  let lastFocusedElement = null;
+  let sessionStats = createEmptySessionStats();
 
   addStyle();
   registerMenu();
   refreshRemoteRulesIfNeeded();
-  scanSoon();
+  scanSoon({ full: true });
   observePage();
 
   function loadSettings() {
@@ -122,6 +131,45 @@
     };
   }
 
+  function compileRules(rules, value) {
+    const blockedHandles = new Set(normalizeList(rules.blockedHandles)
+      .map(normalizeHandle)
+      .filter(Boolean));
+    const blockedNameKeywords = compileKeywords(rules.blockedNameKeywords);
+    const blockedTextKeywords = compileKeywords(rules.blockedTextKeywords);
+    const signature = [
+      value.enabled,
+      value.hideMode,
+      value.skipMainTweetOnStatusPage,
+      value.remoteRulesEnabled,
+      value.remoteCache?.updatedAt || 0,
+      [...blockedHandles].join("|"),
+      blockedNameKeywords.map((item) => item.normalized).join("|"),
+      blockedTextKeywords.map((item) => item.normalized).join("|"),
+    ].join("::");
+
+    return {
+      blockedHandles,
+      blockedNameKeywords,
+      blockedTextKeywords,
+      signature,
+    };
+  }
+
+  function compileKeywords(items) {
+    const seen = new Set();
+    const result = [];
+
+    for (const raw of normalizeList(items)) {
+      const normalized = normalizeText(raw);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      result.push({ raw, normalized });
+    }
+
+    return result;
+  }
+
   function uniqueList(items) {
     const seen = new Set();
     const result = [];
@@ -139,9 +187,10 @@
   function saveSettings(nextSettings = settings) {
     settings = normalizeSettings(nextSettings);
     effectiveRules = buildEffectiveRules(settings);
+    compiledRules = compileRules(effectiveRules, settings);
     GM_setValue(STORE_KEY, JSON.stringify(settings));
     resetScannedState();
-    scanSoon();
+    scanSoon({ full: true });
   }
 
   function registerMenu() {
@@ -217,10 +266,27 @@
         </div>
 
         <div class="xcsf-status">
-          <span data-field="remoteStatus"></span>
+          <span data-field="remoteStatus" aria-live="polite"></span>
           <div class="xcsf-status-actions">
             <button type="button" data-action="dedupe-local">清理重复本地规则</button>
             <button type="button" data-action="update-remote">立即更新</button>
+          </div>
+        </div>
+
+        <div class="xcsf-stats" aria-live="polite">
+          <div>
+            <strong data-field="pageHiddenCount">0</strong>
+            <span>当前页隐藏</span>
+            <small data-field="pageBreakdown"></small>
+          </div>
+          <div>
+            <strong data-field="sessionHiddenCount">0</strong>
+            <span>本次会话命中</span>
+            <small data-field="sessionBreakdown"></small>
+          </div>
+          <div>
+            <strong data-field="ruleCount">0</strong>
+            <span>启用规则</span>
           </div>
         </div>
 
@@ -266,6 +332,7 @@
 
         <div class="xcsf-footer">
           <button type="button" data-action="reset">恢复默认</button>
+          <span class="xcsf-dirty" data-field="dirtyNotice" hidden>有未保存更改</span>
           <div class="xcsf-footer-main">
             <button type="button" data-action="close">取消</button>
             <button type="button" data-action="save" class="xcsf-primary">保存规则</button>
@@ -275,6 +342,8 @@
     `;
 
     document.documentElement.append(overlay);
+    activePanel = overlay;
+    lastFocusedElement = document.activeElement;
 
     const fields = getPanelFields(overlay);
     fields.enabled.checked = settings.enabled;
@@ -290,23 +359,28 @@
     fields.remoteTextKeywordUrls.value = normalizeList(settings.remoteTextKeywordUrls).join("\n");
     fields.remoteStatus.textContent = formatRemoteStatus();
     fields.jsonRules.value = JSON.stringify(settings, null, 2);
+    updatePanelStats(overlay);
 
     overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) closePanel(overlay);
+      if (event.target === overlay) requestClosePanel(overlay);
     });
 
     overlay.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closePanel(overlay);
+      if (event.key === "Escape") requestClosePanel(overlay);
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         saveFromPanel(overlay);
       }
+      keepFocusInPanel(event, overlay);
     });
+
+    overlay.addEventListener("input", () => markPanelDirty(overlay));
+    overlay.addEventListener("change", () => markPanelDirty(overlay));
 
     overlay.addEventListener("click", (event) => {
       const action = event.target.closest("[data-action]")?.dataset.action;
       if (!action) return;
 
-      if (action === "close") closePanel(overlay);
+      if (action === "close") requestClosePanel(overlay);
       if (action === "save") saveFromPanel(overlay);
       if (action === "reset") resetPanelFields(overlay);
       if (action === "update-remote") updateRemoteFromPanel(overlay);
@@ -335,6 +409,12 @@
       remoteTextKeywordUrls: root.querySelector('[data-field="remoteTextKeywordUrls"]'),
       remoteStatus: root.querySelector('[data-field="remoteStatus"]'),
       jsonRules: root.querySelector('[data-field="jsonRules"]'),
+      pageHiddenCount: root.querySelector('[data-field="pageHiddenCount"]'),
+      sessionHiddenCount: root.querySelector('[data-field="sessionHiddenCount"]'),
+      ruleCount: root.querySelector('[data-field="ruleCount"]'),
+      pageBreakdown: root.querySelector('[data-field="pageBreakdown"]'),
+      sessionBreakdown: root.querySelector('[data-field="sessionBreakdown"]'),
+      dirtyNotice: root.querySelector('[data-field="dirtyNotice"]'),
     };
   }
 
@@ -361,6 +441,11 @@
     closePanel(root);
   }
 
+  function markPanelDirty(root) {
+    root.dataset.dirty = "true";
+    getPanelFields(root).dirtyNotice.hidden = false;
+  }
+
   function resetPanelFields(root) {
     if (!confirm("确定要把面板中的规则恢复为默认值吗？")) return;
 
@@ -378,6 +463,7 @@
     fields.remoteTextKeywordUrls.value = DEFAULT_SETTINGS.remoteTextKeywordUrls.join("\n");
     fields.remoteStatus.textContent = "面板已恢复默认值，保存后生效。";
     fields.jsonRules.value = JSON.stringify(DEFAULT_SETTINGS, null, 2);
+    markPanelDirty(root);
   }
 
   function importJsonFromPanel(root) {
@@ -396,16 +482,74 @@
 
   function closePanel(root) {
     root.remove();
+    if (activePanel === root) activePanel = null;
+    if (lastFocusedElement && typeof lastFocusedElement.focus === "function") {
+      lastFocusedElement.focus();
+    }
+    lastFocusedElement = null;
+  }
+
+  function requestClosePanel(root) {
+    if (root.dataset.dirty === "true" && !confirm("设置尚未保存，确定关闭吗？")) return;
+    closePanel(root);
+  }
+
+  function keepFocusInPanel(event, root) {
+    if (event.key !== "Tab") return;
+
+    const focusable = Array.from(root.querySelectorAll([
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "summary",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(","))).filter((element) => element.offsetParent !== null);
+
+    if (!focusable.length) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function updatePanelStats(root = activePanel) {
+    if (!root || !document.contains(root)) return;
+
+    const fields = getPanelFields(root);
+    const pageStats = collectPageStats();
+    const ruleCount = compiledRules.blockedHandles.size
+      + compiledRules.blockedNameKeywords.length
+      + compiledRules.blockedTextKeywords.length;
+
+    fields.pageHiddenCount.textContent = String(pageStats.total);
+    fields.sessionHiddenCount.textContent = String(sessionStats.hidden);
+    fields.ruleCount.textContent = String(ruleCount);
+    fields.pageBreakdown.textContent = formatHitBreakdown(pageStats.byType);
+    fields.sessionBreakdown.textContent = formatHitBreakdown(sessionStats.byType);
+  }
+
+  function formatHitBreakdown(byType) {
+    return `用户名 ${byType.handle} / 显示名 ${byType.name} / 内容 ${byType.text}`;
   }
 
   async function updateRemoteFromPanel(root) {
     const fields = getPanelFields(root);
     saveSettings(readSettingsFromPanel(root));
+    root.dataset.dirty = "false";
+    fields.dirtyNotice.hidden = true;
     fields.remoteStatus.textContent = "正在更新远程规则...";
-    await refreshRemoteRules({ force: true, notify: true });
+    await refreshRemoteRules({ force: true, notify: false });
     if (document.contains(root)) {
       fields.remoteStatus.textContent = formatRemoteStatus();
       fields.jsonRules.value = JSON.stringify(settings, null, 2);
+      updatePanelStats(root);
     }
   }
 
@@ -423,6 +567,7 @@
     fields.blockedNameKeywords.value = result.names.items.join("\n");
     fields.blockedTextKeywords.value = result.texts.items.join("\n");
     fields.jsonRules.value = JSON.stringify(readSettingsFromPanel(root), null, 2);
+    markPanelDirty(root);
 
     if (removedCount) {
       fields.remoteStatus.textContent = `已移除 ${removedCount} 条与远程缓存重复的本地规则，点击“保存规则”后生效。`;
@@ -476,48 +621,63 @@
   async function refreshRemoteRules({ force = false, notify = false } = {}) {
     if (!settings.remoteRulesEnabled && !force) return;
 
-    try {
-      const [blockedHandles, blockedNameKeywords, blockedTextKeywords] = await Promise.all([
-        fetchRemoteLists(settings.remoteHandleUrls),
-        fetchRemoteLists(settings.remoteNameKeywordUrls),
-        fetchRemoteLists(settings.remoteTextKeywordUrls),
-      ]);
+    const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
+    const [handlesResult, namesResult, textsResult] = await Promise.all([
+      fetchRemoteLists(settings.remoteHandleUrls, cache.blockedHandles),
+      fetchRemoteLists(settings.remoteNameKeywordUrls, cache.blockedNameKeywords),
+      fetchRemoteLists(settings.remoteTextKeywordUrls, cache.blockedTextKeywords),
+    ]);
+    const errors = [
+      ...handlesResult.errors,
+      ...namesResult.errors,
+      ...textsResult.errors,
+    ];
 
-      saveSettings({
-        ...settings,
-        remoteCache: {
-          updatedAt: Date.now(),
-          failedAt: 0,
-          error: "",
-          blockedHandles,
-          blockedNameKeywords,
-          blockedTextKeywords,
-        },
-      });
+    saveSettings({
+      ...settings,
+      remoteCache: {
+        updatedAt: Date.now(),
+        failedAt: errors.length ? Date.now() : 0,
+        error: errors.join("；"),
+        blockedHandles: handlesResult.items,
+        blockedNameKeywords: namesResult.items,
+        blockedTextKeywords: textsResult.items,
+      },
+    });
 
-      if (notify) {
-        alert(`远程规则已更新：@用户名 ${blockedHandles.length} 条，显示名关键词 ${blockedNameKeywords.length} 条，评论关键词 ${blockedTextKeywords.length} 条。`);
-      }
-    } catch (error) {
-      saveSettings({
-        ...settings,
-        remoteCache: {
-          ...settings.remoteCache,
-          failedAt: Date.now(),
-          error: error.message,
-        },
-      });
-
-      if (notify) alert(`远程规则更新失败：${error.message}`);
+    if (notify) {
+      const message = `远程规则已更新：@用户名 ${handlesResult.items.length} 条，显示名关键词 ${namesResult.items.length} 条，评论关键词 ${textsResult.items.length} 条。`;
+      alert(errors.length ? `${message}\n部分订阅失败：${errors.join("；")}` : message);
     }
   }
 
-  async function fetchRemoteLists(urls) {
+  async function fetchRemoteLists(urls, fallbackItems = []) {
     const cleanUrls = uniqueList(urls);
-    if (!cleanUrls.length) return [];
+    if (!cleanUrls.length) return { items: [], errors: [] };
 
-    const responses = await Promise.all(cleanUrls.map(fetchText));
-    return uniqueList(responses.flatMap(parseRemoteList));
+    const results = await Promise.allSettled(cleanUrls.map(fetchText));
+    const responses = [];
+    const errors = [];
+
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        responses.push(result.value);
+      } else {
+        errors.push(`${cleanUrls[index]}：${result.reason.message}`);
+      }
+    });
+
+    if (!responses.length && errors.length) {
+      return {
+        items: uniqueList(fallbackItems),
+        errors,
+      };
+    }
+
+    return {
+      items: uniqueList(responses.flatMap(parseRemoteList)),
+      errors,
+    };
   }
 
   function fetchText(url) {
@@ -550,19 +710,31 @@
     ].join("，");
 
     if (!settings.remoteRulesEnabled) return `远程订阅已停用。缓存：${counts}`;
+    if (cache.error && failedAt && updatedAt) return `部分订阅失败：${cache.error}。当前缓存：${counts}`;
     if (cache.error && failedAt) return `上次更新失败：${cache.error}。当前缓存：${counts}`;
     if (!updatedAt) return `尚未成功更新远程规则。当前缓存：${counts}`;
     return `远程规则上次更新：${new Date(updatedAt).toLocaleString()}。缓存：${counts}`;
   }
 
   function observePage() {
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((mutations) => {
       if (location.pathname !== currentPath) {
         currentPath = location.pathname;
+        currentMainTweetArticle = null;
         resetScannedState();
+        sessionStats = createEmptySessionStats();
+        scanSoon({ full: true });
+        return;
       }
 
-      scanSoon();
+      const articles = [];
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          articles.push(...collectArticlesFromNode(node));
+        }
+      }
+
+      if (articles.length) scanSoon({ articles });
     });
 
     observer.observe(document.documentElement, {
@@ -571,49 +743,67 @@
     });
   }
 
-  function scanSoon() {
+  function scanSoon({ articles = [], full = false } = {}) {
+    if (full) fullScanRequested = true;
+    for (const article of articles) pendingArticles.add(article);
+
     clearTimeout(scanTimer);
-    scanTimer = window.setTimeout(scanVisibleArticles, 120);
+    scanTimer = window.setTimeout(scanPendingArticles, 120);
   }
 
-  function scanVisibleArticles() {
+  function scanPendingArticles() {
     if (!settings.enabled) {
       restoreHiddenArticles();
+      pendingArticles.clear();
+      fullScanRequested = false;
+      updatePanelStats();
       return;
     }
 
-    markMainTweet();
+    const mainTweetChanged = markMainTweet();
+    if (mainTweetChanged) resetScannedState();
 
-    for (const article of document.querySelectorAll('article[role="article"]')) {
-      if (article.getAttribute(SCANNED_ATTR) === currentScanSignature()) continue;
-      article.setAttribute(SCANNED_ATTR, currentScanSignature());
+    const signature = currentScanSignature();
+    const articles = fullScanRequested || mainTweetChanged
+      ? Array.from(document.querySelectorAll('article[role="article"]'))
+      : Array.from(pendingArticles).filter((article) => document.contains(article));
 
-      if (shouldSkipArticle(article)) {
-        restoreArticle(article);
-        continue;
-      }
+    for (const article of articles) {
+      scanArticle(article, signature);
+    }
 
-      const reason = getBlockReason(article);
-      if (reason) {
-        hideArticle(article, reason);
-      } else {
-        restoreArticle(article);
-      }
+    pendingArticles.clear();
+    fullScanRequested = false;
+    updatePanelStats();
+  }
+
+  function scanArticle(article, signature) {
+    if (article.getAttribute(SCANNED_ATTR) === signature) return;
+    article.setAttribute(SCANNED_ATTR, signature);
+    sessionStats.scanned += 1;
+
+    if (shouldSkipArticle(article)) {
+      sessionStats.skipped += 1;
+      restoreArticle(article);
+      return;
+    }
+
+    const match = getBlockMatch(article);
+    if (match) {
+      hideArticle(article, match);
+    } else {
+      restoreArticle(article);
     }
   }
 
   function currentScanSignature() {
-    return [
-      settings.enabled,
-      settings.hideMode,
-      settings.skipMainTweetOnStatusPage,
-      settings.remoteRulesEnabled,
-      settings.remoteCache?.updatedAt || 0,
-      normalizeList(effectiveRules.blockedHandles).join("|"),
-      normalizeList(effectiveRules.blockedNameKeywords).join("|"),
-      normalizeList(effectiveRules.blockedTextKeywords).join("|"),
-      currentPath,
-    ].join("::");
+    return `${compiledRules.signature}::${currentPath}`;
+  }
+
+  function collectArticlesFromNode(node) {
+    if (!(node instanceof Element)) return [];
+    if (node.matches('article[role="article"]')) return [node];
+    return Array.from(node.querySelectorAll('article[role="article"]'));
   }
 
   function markMainTweet() {
@@ -621,14 +811,32 @@
       article.removeAttribute(MAIN_TWEET_ATTR);
     }
 
-    if (!isStatusPage() || !settings.skipMainTweetOnStatusPage) return;
+    if (!isStatusPage() || !settings.skipMainTweetOnStatusPage) {
+      const changed = currentMainTweetArticle !== null;
+      currentMainTweetArticle = null;
+      return changed;
+    }
 
-    const firstArticle = document.querySelector('main article[role="article"]');
-    if (firstArticle) firstArticle.setAttribute(MAIN_TWEET_ATTR, "true");
+    const statusId = getCurrentStatusId();
+    const articles = Array.from(document.querySelectorAll('main article[role="article"]'));
+    const mainArticle = articles.find((article) => articleLinksToStatus(article, statusId)) || articles[0];
+    if (mainArticle) mainArticle.setAttribute(MAIN_TWEET_ATTR, "true");
+    const changed = currentMainTweetArticle !== mainArticle;
+    currentMainTweetArticle = mainArticle || null;
+    return changed;
   }
 
   function isStatusPage() {
-    return /^\/[^/]+\/status\/\d+/.test(location.pathname);
+    return Boolean(getCurrentStatusId());
+  }
+
+  function getCurrentStatusId() {
+    return location.pathname.match(/^\/[^/]+\/status\/(\d+)/)?.[1] || "";
+  }
+
+  function articleLinksToStatus(article, statusId) {
+    if (!statusId) return false;
+    return Boolean(article.querySelector(`a[href*="/status/${statusId}"]`));
   }
 
   function shouldSkipArticle(article) {
@@ -637,22 +845,34 @@
     return !article.querySelector('[data-testid="User-Name"], [data-testid="tweetText"]');
   }
 
-  function getBlockReason(article) {
+  function getBlockMatch(article) {
     const author = extractAuthor(article);
     const text = normalizeText(extractTweetText(article));
 
-    const blockedHandle = normalizeList(effectiveRules.blockedHandles)
-      .map(normalizeHandle)
-      .find((handle) => handle && author.handle === handle);
-    if (blockedHandle) return `命中用户名 ${blockedHandle}`;
+    if (author.handle && compiledRules.blockedHandles.has(author.handle)) {
+      return {
+        type: "handle",
+        text: `命中用户名 ${author.handle}`,
+      };
+    }
 
-    const nameKeyword = findKeyword(author.displayName, effectiveRules.blockedNameKeywords);
-    if (nameKeyword) return `命中显示名关键词「${nameKeyword}」`;
+    const nameKeyword = findCompiledKeyword(author.displayName, compiledRules.blockedNameKeywords);
+    if (nameKeyword) {
+      return {
+        type: "name",
+        text: `命中显示名关键词「${nameKeyword.raw}」`,
+      };
+    }
 
-    const textKeyword = findKeyword(text, effectiveRules.blockedTextKeywords);
-    if (textKeyword) return `命中评论关键词「${textKeyword}」`;
+    const textKeyword = findCompiledKeyword(text, compiledRules.blockedTextKeywords);
+    if (textKeyword) {
+      return {
+        type: "text",
+        text: `命中评论关键词「${textKeyword.raw}」`,
+      };
+    }
 
-    return "";
+    return null;
   }
 
   function extractAuthor(article) {
@@ -708,33 +928,37 @@
       .toLowerCase();
   }
 
-  function findKeyword(text, keywords) {
+  function findCompiledKeyword(text, keywords) {
     const haystack = normalizeText(text);
-    return normalizeList(keywords).find((keyword) => {
-      const needle = normalizeText(keyword);
-      return needle && haystack.includes(needle);
-    });
+    return keywords.find((keyword) => haystack.includes(keyword.normalized));
   }
 
-  function hideArticle(article, reason) {
+  function hideArticle(article, match) {
+    const previousReason = article.getAttribute(REASON_ATTR);
     article.setAttribute(HIDDEN_ATTR, settings.hideMode);
-    article.setAttribute("data-xcsf-reason", reason);
+    article.setAttribute(REASON_ATTR, match.text);
+    article.setAttribute(REASON_TYPE_ATTR, match.type);
+    recordHit(match, previousReason);
 
     if (settings.hideMode === "placeholder" && !article.querySelector(":scope > .xcsf-placeholder")) {
       const placeholder = document.createElement("button");
       placeholder.type = "button";
       placeholder.className = "xcsf-placeholder";
-      placeholder.textContent = `${PLACEHOLDER_TEXT}: ${reason}`;
+      placeholder.textContent = `${PLACEHOLDER_TEXT}: ${match.text}`;
       placeholder.addEventListener("click", () => {
         article.setAttribute(HIDDEN_ATTR, "revealed");
       });
       article.prepend(placeholder);
+    } else {
+      const placeholder = article.querySelector(":scope > .xcsf-placeholder");
+      if (placeholder) placeholder.textContent = `${PLACEHOLDER_TEXT}: ${match.text}`;
     }
   }
 
   function restoreArticle(article) {
     article.removeAttribute(HIDDEN_ATTR);
-    article.removeAttribute("data-xcsf-reason");
+    article.removeAttribute(REASON_ATTR);
+    article.removeAttribute(REASON_TYPE_ATTR);
     const placeholder = article.querySelector(":scope > .xcsf-placeholder");
     if (placeholder) placeholder.remove();
   }
@@ -749,6 +973,52 @@
     for (const article of document.querySelectorAll(`article[${SCANNED_ATTR}]`)) {
       article.removeAttribute(SCANNED_ATTR);
     }
+  }
+
+  function createEmptySessionStats() {
+    return {
+      scanned: 0,
+      skipped: 0,
+      hidden: 0,
+      byType: {
+        handle: 0,
+        name: 0,
+        text: 0,
+      },
+      lastReason: "",
+    };
+  }
+
+  function recordHit(match, previousReason) {
+    if (previousReason === match.text) return;
+
+    sessionStats.hidden += 1;
+    if (Object.prototype.hasOwnProperty.call(sessionStats.byType, match.type)) {
+      sessionStats.byType[match.type] += 1;
+    }
+    sessionStats.lastReason = match.text;
+  }
+
+  function collectPageStats() {
+    const stats = {
+      total: 0,
+      byType: {
+        handle: 0,
+        name: 0,
+        text: 0,
+      },
+    };
+
+    for (const article of document.querySelectorAll(`article[${HIDDEN_ATTR}]`)) {
+      if (article.getAttribute(HIDDEN_ATTR) === "revealed") continue;
+      const type = article.getAttribute(REASON_TYPE_ATTR);
+      stats.total += 1;
+      if (Object.prototype.hasOwnProperty.call(stats.byType, type)) {
+        stats.byType[type] += 1;
+      }
+    }
+
+    return stats;
   }
 
   function addStyle() {
@@ -784,6 +1054,13 @@
       }
 
       .xcsf-overlay {
+        --xcsf-bg: rgb(22, 24, 28);
+        --xcsf-bg-muted: rgba(255, 255, 255, 0.03);
+        --xcsf-field-bg: rgb(0, 0, 0);
+        --xcsf-text: rgb(231, 233, 234);
+        --xcsf-muted: rgb(139, 152, 165);
+        --xcsf-border: rgb(47, 51, 54);
+        --xcsf-accent: rgb(29, 155, 240);
         position: fixed;
         inset: 0;
         z-index: 2147483647;
@@ -792,7 +1069,7 @@
         justify-content: center;
         padding: 20px;
         background: rgba(0, 0, 0, 0.58);
-        color: rgb(231, 233, 234);
+        color: var(--xcsf-text);
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
 
@@ -801,9 +1078,9 @@
         width: min(680px, 100%);
         max-height: min(860px, calc(100vh - 40px));
         overflow: auto;
-        border: 1px solid rgb(47, 51, 54);
+        border: 1px solid var(--xcsf-border);
         border-radius: 8px;
-        background: rgb(22, 24, 28);
+        background: var(--xcsf-bg);
         box-shadow: 0 18px 60px rgba(0, 0, 0, 0.48);
       }
 
@@ -814,11 +1091,11 @@
         justify-content: space-between;
         gap: 12px;
         padding: 16px;
-        border-bottom: 1px solid rgb(47, 51, 54);
+        border-bottom: 1px solid var(--xcsf-border);
       }
 
       .xcsf-footer {
-        border-top: 1px solid rgb(47, 51, 54);
+        border-top: 1px solid var(--xcsf-border);
         border-bottom: 0;
       }
 
@@ -830,7 +1107,7 @@
 
       .xcsf-subtitle {
         margin-top: 4px;
-        color: rgb(113, 118, 123);
+        color: var(--xcsf-muted);
         font-size: 14px;
         line-height: 1.4;
       }
@@ -838,6 +1115,7 @@
       .xcsf-controls,
       .xcsf-field,
       .xcsf-status,
+      .xcsf-stats,
       .xcsf-json {
         display: grid;
         gap: 10px;
@@ -850,10 +1128,10 @@
         justify-content: space-between;
         gap: 12px;
         padding: 10px 12px;
-        border: 1px solid rgb(47, 51, 54);
+        border: 1px solid var(--xcsf-border);
         border-radius: 6px;
-        background: rgba(29, 155, 240, 0.08);
-        color: rgb(139, 152, 165);
+        background: color-mix(in srgb, var(--xcsf-accent) 12%, transparent);
+        color: var(--xcsf-muted);
         font-size: 14px;
         line-height: 1.45;
       }
@@ -863,11 +1141,41 @@
         flex: 1;
       }
 
+      .xcsf-stats {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .xcsf-stats > div {
+        display: grid;
+        gap: 2px;
+        padding: 10px 12px;
+        border: 1px solid var(--xcsf-border);
+        border-radius: 6px;
+        background: var(--xcsf-bg-muted);
+      }
+
+      .xcsf-stats strong {
+        color: var(--xcsf-text);
+        font-size: 20px;
+        line-height: 1.1;
+      }
+
+      .xcsf-stats span,
+      .xcsf-stats small,
+      .xcsf-dirty {
+        color: var(--xcsf-muted);
+        font-size: 13px;
+      }
+
+      .xcsf-stats small {
+        min-height: 18px;
+      }
+
       .xcsf-controls {
         padding: 12px;
-        border: 1px solid rgb(47, 51, 54);
+        border: 1px solid var(--xcsf-border);
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.03);
+        background: var(--xcsf-bg-muted);
       }
 
       .xcsf-check,
@@ -876,7 +1184,7 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        color: rgb(231, 233, 234);
+        color: var(--xcsf-text);
         font-size: 14px;
       }
 
@@ -887,7 +1195,7 @@
       .xcsf-field > span,
       .xcsf-json > summary,
       .xcsf-select-label > span {
-        color: rgb(231, 233, 234);
+        color: var(--xcsf-text);
         font-size: 14px;
         font-weight: 700;
       }
@@ -897,12 +1205,20 @@
       .xcsf-select-label select {
         box-sizing: border-box;
         width: 100%;
-        border: 1px solid rgb(47, 51, 54);
+        border: 1px solid var(--xcsf-border);
         border-radius: 6px;
-        background: rgb(0, 0, 0);
-        color: rgb(231, 233, 234);
+        background: var(--xcsf-field-bg);
+        color: var(--xcsf-text);
         font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         outline: none;
+      }
+
+      .xcsf-field textarea:focus,
+      .xcsf-json textarea:focus,
+      .xcsf-select-label select:focus,
+      .xcsf-panel button:focus-visible {
+        border-color: var(--xcsf-accent);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--xcsf-accent) 35%, transparent);
       }
 
       .xcsf-field textarea,
@@ -943,7 +1259,7 @@
         border: 1px solid rgb(83, 100, 113);
         border-radius: 6px;
         background: transparent;
-        color: rgb(231, 233, 234);
+        color: var(--xcsf-text);
         font: 14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         cursor: pointer;
       }
@@ -953,8 +1269,8 @@
       }
 
       .xcsf-panel .xcsf-primary {
-        border-color: rgb(29, 155, 240);
-        background: rgb(29, 155, 240);
+        border-color: var(--xcsf-accent);
+        background: var(--xcsf-accent);
         color: white;
         font-weight: 700;
       }
@@ -967,6 +1283,17 @@
         border-radius: 8px !important;
         font-size: 28px !important;
         line-height: 1 !important;
+      }
+
+      @media (prefers-color-scheme: light) {
+        .xcsf-overlay {
+          --xcsf-bg: rgb(255, 255, 255);
+          --xcsf-bg-muted: rgb(247, 249, 249);
+          --xcsf-field-bg: rgb(255, 255, 255);
+          --xcsf-text: rgb(15, 20, 25);
+          --xcsf-muted: rgb(83, 100, 113);
+          --xcsf-border: rgb(207, 217, 222);
+        }
       }
 
       @media (max-width: 560px) {
@@ -987,6 +1314,10 @@
 
         .xcsf-select-label select {
           max-width: none;
+        }
+
+        .xcsf-stats {
+          grid-template-columns: 1fr;
         }
       }
     `;
