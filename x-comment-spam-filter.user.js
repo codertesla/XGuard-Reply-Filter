@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.2.3
+// @version      1.2.4
 // @description  按用户名、显示名关键词、评论内容关键词隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
+// @icon         https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/assets/xguard-icon.svg
+// @icon64       https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/assets/xguard-icon.svg
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @grant        GM_getValue
