@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.3.1
+// @version      1.3.2
 // @description  按用户名、显示名关键词、评论内容关键词隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -234,9 +234,10 @@
       "",
       `当前页隐藏：${pageStats.total}（${formatHitBreakdown(pageStats.byType)}）`,
       `本次会话命中：${sessionStats.hidden}（${formatHitBreakdown(sessionStats.byType)}）`,
-      `启用规则：${ruleCount}`,
+      `启用规则：${ruleCount}（用户名 ${compiledRules.blockedHandles.size} / 显示名 ${compiledRules.blockedNameKeywords.length} / 内容 ${compiledRules.blockedTextKeywords.length}）`,
       `扫描文章：${sessionStats.scanned}`,
       `跳过文章：${sessionStats.skipped}`,
+      `远程状态：${formatRemoteStatus()}`,
     ].join("\n"));
   }
 
@@ -308,6 +309,7 @@
           <div>
             <strong data-field="ruleCount">0</strong>
             <span>启用规则</span>
+            <small data-field="ruleBreakdown"></small>
           </div>
         </div>
 
@@ -435,6 +437,7 @@
       ruleCount: root.querySelector('[data-field="ruleCount"]'),
       pageBreakdown: root.querySelector('[data-field="pageBreakdown"]'),
       sessionBreakdown: root.querySelector('[data-field="sessionBreakdown"]'),
+      ruleBreakdown: root.querySelector('[data-field="ruleBreakdown"]'),
       dirtyNotice: root.querySelector('[data-field="dirtyNotice"]'),
     };
   }
@@ -554,6 +557,7 @@
     fields.ruleCount.textContent = String(ruleCount);
     fields.pageBreakdown.textContent = formatHitBreakdown(pageStats.byType);
     fields.sessionBreakdown.textContent = formatHitBreakdown(sessionStats.byType);
+    fields.ruleBreakdown.textContent = `用户名 ${compiledRules.blockedHandles.size} / 显示名 ${compiledRules.blockedNameKeywords.length} / 内容 ${compiledRules.blockedTextKeywords.length}`;
   }
 
   function formatHitBreakdown(byType) {
@@ -705,7 +709,7 @@
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: "GET",
-        url,
+        url: withCacheBuster(url),
         timeout: 15000,
         onload: (response) => {
           if (response.status >= 200 && response.status < 300) {
@@ -718,6 +722,11 @@
         ontimeout: () => reject(new Error(`${url} 请求超时`)),
       });
     });
+  }
+
+  function withCacheBuster(url) {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}_xguard=${Date.now()}`;
   }
 
   function formatRemoteStatus() {
