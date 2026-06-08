@@ -1,0 +1,12 @@
+# XGuard Reply Filter - reply text keywords
+# One keyword per line. Lines starting with # are ignored.
+
+线下
+丄门
+上门
+喝茶
+约
+私信
+电报
+telegram
+whatsapp

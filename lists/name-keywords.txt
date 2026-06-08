@@ -1,0 +1,7 @@
+# XGuard Reply Filter - display name keywords
+# One keyword per line. Lines starting with # are ignored.
+
+线下
+丄门
+上门
+喝茶

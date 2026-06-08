@@ -1,0 +1,53 @@
+# XGuard Reply Filter
+
+XGuard 评论净化器是一个用于 X/Twitter 的油猴脚本，可以按 `@用户名`、显示名关键词、评论内容关键词隐藏推文下方的垃圾回复。
+
+## 功能
+
+- 隐藏匹配规则的评论区回复
+- 默认跳过推文详情页第一条主推文，避免误伤原帖
+- 支持本地规则编辑
+- 支持远程规则订阅，每类规则可配置多个 URL
+- 远程规则会缓存，网络失败时继续使用上次成功缓存
+- 支持直接隐藏或显示占位提示两种模式
+
+## 安装
+
+安装 Tampermonkey 或 Violentmonkey 后，打开脚本文件：
+
+```text
+https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/x-comment-spam-filter.user.js
+```
+
+## 默认远程规则
+
+脚本默认订阅本仓库的三个规则文件：
+
+```text
+https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/lists/handles.txt
+https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/lists/name-keywords.txt
+https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/lists/comment-keywords.txt
+```
+
+规则文件格式很简单：每行一条，空行和 `#` 开头的注释会被忽略。
+
+## 维护规则
+
+- `lists/handles.txt`：精确匹配 `@用户名`
+- `lists/name-keywords.txt`：匹配显示名关键词
+- `lists/comment-keywords.txt`：匹配评论内容关键词
+
+建议不要把三类规则混在同一个文件里，因为用户名是精确匹配，关键词是包含匹配，分开维护可以减少误杀。
+
+## 使用
+
+安装脚本后，在油猴菜单里点击「打开过滤设置」：
+
+- 本地规则可以直接在文本框中编辑，每行一条
+- 远程订阅 URL 可以每行添加一个
+- 点击「立即更新远程规则」可手动刷新缓存
+- `Ctrl/Cmd + Enter` 可快速保存设置
+
+## 注意
+
+公开列表可能带来误杀风险。遇到误伤时，可以先停用远程订阅，或把相关关键词从订阅列表中移除。
