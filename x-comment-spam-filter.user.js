@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.5.2
+// @version      1.5.3
 // @description  按显示名关键词、评论内容关键词批量隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -261,7 +261,11 @@
             <div class="xcsf-title">XGuard 设置</div>
             <div class="xcsf-subtitle">显示名 / 评论关键词，每行一条</div>
           </div>
-          <button class="xcsf-icon-button" type="button" data-action="close" aria-label="关闭">×</button>
+          <button class="xcsf-icon-button" type="button" data-action="close" aria-label="关闭">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M6.4 6.4 17.6 17.6M17.6 6.4 6.4 17.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+            </svg>
+          </button>
         </div>
 
         <div class="xcsf-body">
@@ -1387,13 +1391,22 @@
       }
 
       .xcsf-icon-button {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
         flex: 0 0 auto;
         width: 34px;
+        height: 34px;
         min-height: 34px !important;
         padding: 0 !important;
         border-radius: 8px !important;
-        font-size: 22px !important;
-        line-height: 1 !important;
+        line-height: 0 !important;
+      }
+
+      .xcsf-icon-button svg {
+        display: block;
+        width: 16px;
+        height: 16px;
       }
 
       @media (prefers-color-scheme: light) {
