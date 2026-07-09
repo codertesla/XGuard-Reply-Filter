@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.3.2
+// @version      1.4.0
 // @description  按用户名、显示名关键词、评论内容关键词隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
-// @icon         https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/assets/xguard-icon.svg
-// @icon64       https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/assets/xguard-icon.svg
+// @icon         https://abs.twimg.com/favicons/twitter.3.ico
+// @icon64       https://raw.githubusercontent.com/codertesla/XGuard-Reply-Filter/main/assets/x-icon-64.png
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @grant        GM_getValue
@@ -57,6 +57,7 @@
   };
 
   const PLACEHOLDER_TEXT = "已由 XGuard 推特评论净化器隐藏";
+  const ZERO_WIDTH_RE = /[\u200B-\u200D\uFEFF\u2060\u180E]/g;
   let settings = loadSettings();
   let effectiveRules = buildEffectiveRules(settings);
   let compiledRules = compileRules(effectiveRules, settings);
@@ -68,6 +69,8 @@
   let activePanel = null;
   let lastFocusedElement = null;
   let sessionStats = createEmptySessionStats();
+  let remoteRefreshPromise = null;
+  let lastRemoteCheckAt = 0;
 
   addStyle();
   registerMenu();
@@ -635,50 +638,98 @@
     return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
   }
 
-  async function refreshRemoteRulesIfNeeded() {
+  async function refreshRemoteRulesIfNeeded({ forceCheck = false } = {}) {
     if (!settings.remoteRulesEnabled) return;
+    const now = Date.now();
+    if (!forceCheck && now - lastRemoteCheckAt < 60 * 1000) return;
+    lastRemoteCheckAt = now;
+
     const intervalMs = settings.remoteUpdateIntervalHours * 60 * 60 * 1000;
     const updatedAt = Number(settings.remoteCache?.updatedAt) || 0;
-    if (Date.now() - updatedAt < intervalMs) return;
+    const failedAt = Number(settings.remoteCache?.failedAt) || 0;
+    const retryMs = Math.min(intervalMs, 30 * 60 * 1000);
+
+    // 成功缓存未过期则跳过；若上次全失败，则按较短间隔重试。
+    if (updatedAt && now - updatedAt < intervalMs) {
+      if (!failedAt || now - failedAt < retryMs) return;
+    } else if (!updatedAt && failedAt && now - failedAt < retryMs) {
+      return;
+    }
+
     await refreshRemoteRules({ force: false, notify: false });
   }
 
   async function refreshRemoteRules({ force = false, notify = false } = {}) {
     if (!settings.remoteRulesEnabled && !force) return;
+    if (remoteRefreshPromise) return remoteRefreshPromise;
 
-    const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
-    const [handlesResult, namesResult, textsResult] = await Promise.all([
-      fetchRemoteLists(settings.remoteHandleUrls, cache.blockedHandles),
-      fetchRemoteLists(settings.remoteNameKeywordUrls, cache.blockedNameKeywords),
-      fetchRemoteLists(settings.remoteTextKeywordUrls, cache.blockedTextKeywords),
-    ]);
-    const errors = [
-      ...handlesResult.errors,
-      ...namesResult.errors,
-      ...textsResult.errors,
-    ];
+    remoteRefreshPromise = (async () => {
+      const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
+      const [handlesResult, namesResult, textsResult] = await Promise.all([
+        fetchRemoteLists(settings.remoteHandleUrls, cache.blockedHandles),
+        fetchRemoteLists(settings.remoteNameKeywordUrls, cache.blockedNameKeywords),
+        fetchRemoteLists(settings.remoteTextKeywordUrls, cache.blockedTextKeywords),
+      ]);
+      const results = [handlesResult, namesResult, textsResult];
+      const errors = results.flatMap((result) => result.errors);
+      const attempted = results.filter((result) => result.attempted);
+      const anySuccess = attempted.some((result) => result.ok);
 
-    saveSettings({
-      ...settings,
-      remoteCache: {
-        updatedAt: Date.now(),
-        failedAt: errors.length ? Date.now() : 0,
-        error: errors.join("；"),
-        blockedHandles: handlesResult.items,
-        blockedNameKeywords: namesResult.items,
-        blockedTextKeywords: textsResult.items,
-      },
-    });
+      if (!attempted.length) {
+        if (notify) alert("未配置任何远程订阅 URL。");
+        return;
+      }
 
-    if (notify) {
-      const message = `远程规则已更新：@用户名 ${handlesResult.items.length} 条，显示名关键词 ${namesResult.items.length} 条，评论关键词 ${textsResult.items.length} 条。`;
-      alert(errors.length ? `${message}\n部分订阅失败：${errors.join("；")}` : message);
+      if (!anySuccess) {
+        saveSettings({
+          ...settings,
+          remoteCache: {
+            ...cache,
+            failedAt: Date.now(),
+            error: errors.join("；") || "远程规则更新失败",
+          },
+        });
+        if (notify) {
+          alert(`远程规则更新失败，已保留上次缓存。\n${errors.join("；")}`);
+        }
+        return;
+      }
+
+      saveSettings({
+        ...settings,
+        remoteCache: {
+          updatedAt: Date.now(),
+          failedAt: errors.length ? Date.now() : 0,
+          error: errors.join("；"),
+          blockedHandles: handlesResult.items,
+          blockedNameKeywords: namesResult.items,
+          blockedTextKeywords: textsResult.items,
+        },
+      });
+
+      if (notify) {
+        const message = `远程规则已更新：@用户名 ${handlesResult.items.length} 条，显示名关键词 ${namesResult.items.length} 条，评论关键词 ${textsResult.items.length} 条。`;
+        alert(errors.length ? `${message}\n部分订阅失败：${errors.join("；")}` : message);
+      }
+    })();
+
+    try {
+      await remoteRefreshPromise;
+    } finally {
+      remoteRefreshPromise = null;
     }
   }
 
   async function fetchRemoteLists(urls, fallbackItems = []) {
     const cleanUrls = uniqueList(urls);
-    if (!cleanUrls.length) return { items: [], errors: [] };
+    if (!cleanUrls.length) {
+      return {
+        items: uniqueList(fallbackItems),
+        errors: [],
+        attempted: false,
+        ok: false,
+      };
+    }
 
     const results = await Promise.allSettled(cleanUrls.map(fetchText));
     const responses = [];
@@ -688,20 +739,24 @@
       if (result.status === "fulfilled") {
         responses.push(result.value);
       } else {
-        errors.push(`${cleanUrls[index]}：${result.reason.message}`);
+        errors.push(`${cleanUrls[index]}：${result.reason?.message || result.reason}`);
       }
     });
 
-    if (!responses.length && errors.length) {
+    if (!responses.length) {
       return {
         items: uniqueList(fallbackItems),
         errors,
+        attempted: true,
+        ok: false,
       };
     }
 
     return {
       items: uniqueList(responses.flatMap(parseRemoteList)),
       errors,
+      attempted: true,
+      ok: true,
     };
   }
 
@@ -740,8 +795,8 @@
     ].join("，");
 
     if (!settings.remoteRulesEnabled) return `远程订阅已停用。缓存：${counts}`;
+    if (cache.error && failedAt && !updatedAt) return `上次更新失败：${cache.error}。当前缓存：${counts}`;
     if (cache.error && failedAt && updatedAt) return `部分订阅失败：${cache.error}。当前缓存：${counts}`;
-    if (cache.error && failedAt) return `上次更新失败：${cache.error}。当前缓存：${counts}`;
     if (!updatedAt) return `尚未成功更新远程规则。当前缓存：${counts}`;
     return `远程规则上次更新：${new Date(updatedAt).toLocaleString()}。缓存：${counts}`;
   }
@@ -753,6 +808,7 @@
         currentMainTweetArticle = null;
         resetScannedState();
         sessionStats = createEmptySessionStats();
+        refreshRemoteRulesIfNeeded();
         scanSoon({ full: true });
         return;
       }
@@ -771,6 +827,20 @@
       childList: true,
       subtree: true,
     });
+
+    // X 是 SPA，部分路由切换不一定触发足够的 DOM mutation；定期兜底检查。
+    window.setInterval(() => {
+      if (location.pathname !== currentPath) {
+        currentPath = location.pathname;
+        currentMainTweetArticle = null;
+        resetScannedState();
+        sessionStats = createEmptySessionStats();
+        refreshRemoteRulesIfNeeded();
+        scanSoon({ full: true });
+        return;
+      }
+      refreshRemoteRulesIfNeeded();
+    }, 1500);
   }
 
   function scanSoon({ articles = [], full = false } = {}) {
@@ -836,6 +906,16 @@
     return Array.from(node.querySelectorAll('article[role="article"]'));
   }
 
+  function getOwnUserNameRoot(article) {
+    const roots = Array.from(article.querySelectorAll('[data-testid="User-Name"]'));
+    return roots.find((root) => root.closest('article[role="article"]') === article) || null;
+  }
+
+  function getOwnTweetTextRoot(article) {
+    const roots = Array.from(article.querySelectorAll('[data-testid="tweetText"]'));
+    return roots.find((root) => root.closest('article[role="article"]') === article) || null;
+  }
+
   function markMainTweet() {
     for (const article of document.querySelectorAll(`[${MAIN_TWEET_ATTR}]`)) {
       article.removeAttribute(MAIN_TWEET_ATTR);
@@ -848,7 +928,8 @@
     }
 
     const statusId = getCurrentStatusId();
-    const articles = Array.from(document.querySelectorAll('main article[role="article"]'));
+    const articles = Array.from(document.querySelectorAll('main article[role="article"]'))
+      .filter((article) => !article.parentElement?.closest('article[role="article"]'));
     const mainArticle = articles.find((article) => articleLinksToStatus(article, statusId)) || articles[0];
     if (mainArticle) mainArticle.setAttribute(MAIN_TWEET_ATTR, "true");
     const changed = currentMainTweetArticle !== mainArticle;
@@ -866,13 +947,16 @@
 
   function articleLinksToStatus(article, statusId) {
     if (!statusId) return false;
-    return Boolean(article.querySelector(`a[href*="/status/${statusId}"]`));
+    const links = Array.from(article.querySelectorAll(`a[href*="/status/${statusId}"]`));
+    return links.some((link) => link.closest('article[role="article"]') === article);
   }
 
   function shouldSkipArticle(article) {
+    // 引用推文等嵌套 article 由外层回复统一处理，避免误伤引用内容。
+    if (article.parentElement?.closest('article[role="article"]')) return true;
     if (article.getAttribute(MAIN_TWEET_ATTR) === "true") return true;
     if (article.querySelector('[data-testid="placementTracking"]')) return true;
-    return !article.querySelector('[data-testid="User-Name"], [data-testid="tweetText"]');
+    return !getOwnUserNameRoot(article) && !getOwnTweetTextRoot(article);
   }
 
   function getBlockMatch(article) {
@@ -906,23 +990,36 @@
   }
 
   function extractAuthor(article) {
-    const userName = article.querySelector('[data-testid="User-Name"]');
+    const userName = getOwnUserNameRoot(article);
     if (!userName) return { displayName: "", handle: "" };
 
-    const handleNode = Array.from(userName.querySelectorAll("span"))
+    const handleFromLink = Array.from(userName.querySelectorAll('a[href^="/"]'))
+      .map((link) => {
+        const href = link.getAttribute("href") || "";
+        const match = href.match(/^\/([A-Za-z0-9_]{1,15})(?:\/|$)/);
+        if (!match) return "";
+        const candidate = match[1].toLowerCase();
+        if (["home", "explore", "search", "settings", "i", "intent", "messages", "notifications"].includes(candidate)) {
+          return "";
+        }
+        return `@${candidate}`;
+      })
+      .find(Boolean);
+
+    const handleFromText = Array.from(userName.querySelectorAll("span"))
       .map((node) => node.textContent.trim())
-      .find((text) => /^@\w{1,15}$/.test(text));
+      .find((text) => /^@\w{1,15}$/i.test(text));
 
     const displayNameLink = userName.querySelector('a[href^="/"]');
 
     return {
       displayName: normalizeText(textWithEmojiAlt(displayNameLink || userName)),
-      handle: normalizeHandle(handleNode || ""),
+      handle: normalizeHandle(handleFromLink || handleFromText || ""),
     };
   }
 
   function extractTweetText(article) {
-    const tweetText = article.querySelector('[data-testid="tweetText"]');
+    const tweetText = getOwnTweetTextRoot(article);
     return tweetText ? textWithEmojiAlt(tweetText) : "";
   }
 
@@ -946,13 +1043,18 @@
   }
 
   function normalizeHandle(value) {
-    const handle = String(value).trim().replace(/^@?/, "@").toLowerCase();
+    const handle = String(value)
+      .replace(ZERO_WIDTH_RE, "")
+      .trim()
+      .replace(/^@?/, "@")
+      .toLowerCase();
     return /^@\w{1,15}$/.test(handle) ? handle : "";
   }
 
   function normalizeText(value) {
     return String(value)
       .normalize("NFKC")
+      .replace(ZERO_WIDTH_RE, "")
       .replace(/\s+/g, " ")
       .trim()
       .toLowerCase();
@@ -970,19 +1072,22 @@
     article.setAttribute(REASON_TYPE_ATTR, match.type);
     recordHit(match, previousReason);
 
-    if (settings.hideMode === "placeholder" && !article.querySelector(":scope > .xcsf-placeholder")) {
-      const placeholder = document.createElement("button");
-      placeholder.type = "button";
-      placeholder.className = "xcsf-placeholder";
+    let placeholder = article.querySelector(":scope > .xcsf-placeholder");
+    if (settings.hideMode === "placeholder") {
+      if (!placeholder) {
+        placeholder = document.createElement("button");
+        placeholder.type = "button";
+        placeholder.className = "xcsf-placeholder";
+        placeholder.addEventListener("click", () => {
+          article.setAttribute(HIDDEN_ATTR, "revealed");
+        });
+        article.prepend(placeholder);
+      }
       placeholder.textContent = `${PLACEHOLDER_TEXT}: ${match.text}`;
-      placeholder.addEventListener("click", () => {
-        article.setAttribute(HIDDEN_ATTR, "revealed");
-      });
-      article.prepend(placeholder);
-    } else {
-      const placeholder = article.querySelector(":scope > .xcsf-placeholder");
-      if (placeholder) placeholder.textContent = `${PLACEHOLDER_TEXT}: ${match.text}`;
+      return;
     }
+
+    if (placeholder) placeholder.remove();
   }
 
   function restoreArticle(article) {

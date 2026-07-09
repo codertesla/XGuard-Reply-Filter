@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="XGuard">
-  <rect width="128" height="128" rx="28" fill="#0f1419"/>
-  <path d="M64 16 104 31v31c0 24-15 41-40 50-25-9-40-26-40-50V31l40-15Z" fill="#1d9bf0"/>
-  <path d="M64 26 94 37v24c0 17-10 30-30 38-20-8-30-21-30-38V37l30-11Z" fill="#0f1419"/>
-  <path d="M42 41h15l9 14 11-14h15L74 65l19 25H78L67 74 55 90H40l20-25-18-24Z" fill="#ffffff"/>
-</svg>
