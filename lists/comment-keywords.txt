@@ -2,11 +2,11 @@
 # One keyword per line. Lines starting with # are ignored.
 
 # Chinese adult-service spam patterns
+# Prefer multi-character phrases; single-char keywords are too broad.
 线下
 丄门
 上门
 喝茶
-约
 私信
 电报
 飞机群
