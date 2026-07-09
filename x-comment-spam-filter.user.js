@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.5.0
+// @version      1.5.1
 // @description  按显示名关键词、评论内容关键词批量隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -33,7 +33,7 @@
     hideMode: "remove", // "remove" or "placeholder"
     skipMainTweetOnStatusPage: true,
     remoteRulesEnabled: true,
-    remoteUpdateIntervalHours: 12,
+    remoteUpdateIntervalHours: 24,
     blockedNameKeywords: [],
     blockedTextKeywords: [],
     remoteNameKeywordUrls: [
@@ -103,7 +103,7 @@
       hideMode: value.hideMode === "placeholder" ? "placeholder" : "remove",
       skipMainTweetOnStatusPage: value.skipMainTweetOnStatusPage !== false,
       remoteRulesEnabled: value.remoteRulesEnabled !== false,
-      remoteUpdateIntervalHours: Number(value.remoteUpdateIntervalHours) || DEFAULT_SETTINGS.remoteUpdateIntervalHours,
+      remoteUpdateIntervalHours: normalizeUpdateIntervalHours(value.remoteUpdateIntervalHours),
       blockedNameKeywords: normalizeList(value.blockedNameKeywords),
       blockedTextKeywords: normalizeList(value.blockedTextKeywords),
       remoteNameKeywordUrls: Array.isArray(value.remoteNameKeywordUrls)
@@ -114,6 +114,15 @@
         : [...DEFAULT_SETTINGS.remoteTextKeywordUrls],
       remoteCache,
     };
+  }
+
+  function normalizeUpdateIntervalHours(value) {
+    const hours = Number(value);
+    // 默认每天一次；旧版 6/12 小时会自动迁移到 24，降低 GitHub 429。
+    if (hours === 168) return 168;
+    if (hours === 24) return 24;
+    if (hours === 6 || hours === 12) return 24;
+    return DEFAULT_SETTINGS.remoteUpdateIntervalHours;
   }
 
   function buildEffectiveRules(value) {
@@ -249,106 +258,89 @@
       <div class="xcsf-panel" role="dialog" aria-modal="true" aria-label="XGuard 推特评论净化器设置">
         <div class="xcsf-header">
           <div>
-            <div class="xcsf-title">XGuard 推特评论净化器</div>
-            <div class="xcsf-subtitle">按显示名 / 评论关键词批量过滤；本地规则每行一条，远程订阅可配置多个 URL。</div>
+            <div class="xcsf-title">XGuard 设置</div>
+            <div class="xcsf-subtitle">显示名 / 评论关键词，每行一条</div>
           </div>
           <button class="xcsf-icon-button" type="button" data-action="close" aria-label="关闭">×</button>
         </div>
 
-        <div class="xcsf-controls">
-          <label class="xcsf-check">
-            <input type="checkbox" data-field="enabled">
-            <span>启用过滤</span>
-          </label>
-          <label class="xcsf-check">
-            <input type="checkbox" data-field="skipMainTweetOnStatusPage">
-            <span>推文详情页不处理第一条主推文</span>
-          </label>
-          <label class="xcsf-check">
-            <input type="checkbox" data-field="remoteRulesEnabled">
-            <span>启用远程订阅规则</span>
-          </label>
-          <label class="xcsf-select-label">
-            <span>隐藏模式</span>
-            <select data-field="hideMode">
-              <option value="remove">直接隐藏</option>
-              <option value="placeholder">显示占位提示，可点击临时展开</option>
-            </select>
-          </label>
-          <label class="xcsf-select-label">
-            <span>自动更新间隔</span>
-            <select data-field="remoteUpdateIntervalHours">
-              <option value="6">每 6 小时</option>
-              <option value="12">每 12 小时</option>
-              <option value="24">每天</option>
-              <option value="168">每周</option>
-            </select>
-          </label>
+        <div class="xcsf-body">
+          <div class="xcsf-toolbar">
+            <label class="xcsf-check">
+              <input type="checkbox" data-field="enabled">
+              <span>启用</span>
+            </label>
+            <label class="xcsf-check">
+              <input type="checkbox" data-field="remoteRulesEnabled">
+              <span>远程订阅</span>
+            </label>
+            <label class="xcsf-select-label">
+              <span>隐藏</span>
+              <select data-field="hideMode">
+                <option value="remove">直接隐藏</option>
+                <option value="placeholder">占位可展开</option>
+              </select>
+            </label>
+            <button type="button" data-action="update-remote">更新规则</button>
+          </div>
+
+          <div class="xcsf-meta" aria-live="polite">
+            <span data-field="statsSummary"></span>
+            <span data-field="remoteStatus"></span>
+          </div>
+
+          <div class="xcsf-keywords">
+            <label class="xcsf-field">
+              <span>显示名关键词</span>
+              <textarea data-field="blockedNameKeywords" spellcheck="false" placeholder="线下&#10;上门&#10;点击主页"></textarea>
+            </label>
+            <label class="xcsf-field">
+              <span>评论关键词</span>
+              <textarea data-field="blockedTextKeywords" spellcheck="false" placeholder="telegram&#10;whatsapp&#10;领空投"></textarea>
+            </label>
+          </div>
+
+          <details class="xcsf-advanced">
+            <summary>高级选项</summary>
+            <div class="xcsf-advanced-grid">
+              <label class="xcsf-check">
+                <input type="checkbox" data-field="skipMainTweetOnStatusPage">
+                <span>详情页跳过主推文</span>
+              </label>
+              <label class="xcsf-select-label">
+                <span>自动更新</span>
+                <select data-field="remoteUpdateIntervalHours">
+                  <option value="24">每天</option>
+                  <option value="168">每周</option>
+                </select>
+              </label>
+              <button type="button" data-action="dedupe-local">清理与远程重复的本地规则</button>
+            </div>
+            <label class="xcsf-field">
+              <span>远程显示名列表 URL</span>
+              <textarea data-field="remoteNameKeywordUrls" spellcheck="false" rows="2"></textarea>
+            </label>
+            <label class="xcsf-field">
+              <span>远程评论列表 URL</span>
+              <textarea data-field="remoteTextKeywordUrls" spellcheck="false" rows="2"></textarea>
+            </label>
+            <label class="xcsf-field">
+              <span>导入 / 导出 JSON</span>
+              <textarea data-field="jsonRules" spellcheck="false" rows="4"></textarea>
+            </label>
+            <div class="xcsf-row">
+              <button type="button" data-action="refresh-json">刷新导出</button>
+              <button type="button" data-action="import-json">从 JSON 导入</button>
+            </div>
+          </details>
         </div>
-
-        <div class="xcsf-status">
-          <span data-field="remoteStatus" aria-live="polite"></span>
-          <div class="xcsf-status-actions">
-            <button type="button" data-action="dedupe-local">清理重复本地规则</button>
-            <button type="button" data-action="update-remote">立即更新</button>
-          </div>
-        </div>
-
-        <div class="xcsf-stats" aria-live="polite">
-          <div>
-            <strong data-field="pageHiddenCount">0</strong>
-            <span>当前页隐藏</span>
-            <small data-field="pageBreakdown"></small>
-          </div>
-          <div>
-            <strong data-field="sessionHiddenCount">0</strong>
-            <span>本次会话命中</span>
-            <small data-field="sessionBreakdown"></small>
-          </div>
-          <div>
-            <strong data-field="ruleCount">0</strong>
-            <span>启用规则</span>
-            <small data-field="ruleBreakdown"></small>
-          </div>
-        </div>
-
-        <label class="xcsf-field">
-          <span>本地屏蔽显示名关键词</span>
-          <textarea data-field="blockedNameKeywords" spellcheck="false" placeholder="线下&#10;上门&#10;点击主页"></textarea>
-        </label>
-
-        <label class="xcsf-field">
-          <span>本地屏蔽评论内容关键词</span>
-          <textarea data-field="blockedTextKeywords" spellcheck="false" placeholder="telegram&#10;whatsapp&#10;领空投"></textarea>
-        </label>
-
-        <details class="xcsf-json" open>
-          <summary>远程关键词订阅 URL</summary>
-          <label class="xcsf-field xcsf-nested-field">
-            <span>远程显示名关键词列表 URL</span>
-            <textarea data-field="remoteNameKeywordUrls" spellcheck="false" rows="2"></textarea>
-          </label>
-          <label class="xcsf-field xcsf-nested-field">
-            <span>远程评论关键词列表 URL</span>
-            <textarea data-field="remoteTextKeywordUrls" spellcheck="false" rows="2"></textarea>
-          </label>
-        </details>
-
-        <details class="xcsf-json">
-          <summary>导入 / 导出完整规则 JSON</summary>
-          <textarea data-field="jsonRules" spellcheck="false"></textarea>
-          <div class="xcsf-row">
-            <button type="button" data-action="refresh-json">刷新导出内容</button>
-            <button type="button" data-action="import-json">从 JSON 导入</button>
-          </div>
-        </details>
 
         <div class="xcsf-footer">
           <button type="button" data-action="reset">恢复默认</button>
-          <span class="xcsf-dirty" data-field="dirtyNotice" hidden>有未保存更改</span>
+          <span class="xcsf-dirty" data-field="dirtyNotice" hidden>未保存</span>
           <div class="xcsf-footer-main">
             <button type="button" data-action="close">取消</button>
-            <button type="button" data-action="save" class="xcsf-primary">保存规则</button>
+            <button type="button" data-action="save" class="xcsf-primary">保存</button>
           </div>
         </div>
       </div>
@@ -418,12 +410,7 @@
       remoteTextKeywordUrls: root.querySelector('[data-field="remoteTextKeywordUrls"]'),
       remoteStatus: root.querySelector('[data-field="remoteStatus"]'),
       jsonRules: root.querySelector('[data-field="jsonRules"]'),
-      pageHiddenCount: root.querySelector('[data-field="pageHiddenCount"]'),
-      sessionHiddenCount: root.querySelector('[data-field="sessionHiddenCount"]'),
-      ruleCount: root.querySelector('[data-field="ruleCount"]'),
-      pageBreakdown: root.querySelector('[data-field="pageBreakdown"]'),
-      sessionBreakdown: root.querySelector('[data-field="sessionBreakdown"]'),
-      ruleBreakdown: root.querySelector('[data-field="ruleBreakdown"]'),
+      statsSummary: root.querySelector('[data-field="statsSummary"]'),
       dirtyNotice: root.querySelector('[data-field="dirtyNotice"]'),
     };
   }
@@ -436,7 +423,7 @@
       skipMainTweetOnStatusPage: fields.skipMainTweetOnStatusPage.checked,
       remoteRulesEnabled: fields.remoteRulesEnabled.checked,
       hideMode: fields.hideMode.value,
-      remoteUpdateIntervalHours: Number(fields.remoteUpdateIntervalHours.value) || DEFAULT_SETTINGS.remoteUpdateIntervalHours,
+      remoteUpdateIntervalHours: normalizeUpdateIntervalHours(fields.remoteUpdateIntervalHours.value),
       blockedNameKeywords: parseList(fields.blockedNameKeywords.value),
       blockedTextKeywords: parseList(fields.blockedTextKeywords.value),
       remoteNameKeywordUrls: parseList(fields.remoteNameKeywordUrls.value),
@@ -533,12 +520,11 @@
     const ruleCount = compiledRules.blockedNameKeywords.length
       + compiledRules.blockedTextKeywords.length;
 
-    fields.pageHiddenCount.textContent = String(pageStats.total);
-    fields.sessionHiddenCount.textContent = String(sessionStats.hidden);
-    fields.ruleCount.textContent = String(ruleCount);
-    fields.pageBreakdown.textContent = formatHitBreakdown(pageStats.byType);
-    fields.sessionBreakdown.textContent = formatHitBreakdown(sessionStats.byType);
-    fields.ruleBreakdown.textContent = `显示名 ${compiledRules.blockedNameKeywords.length} / 内容 ${compiledRules.blockedTextKeywords.length}`;
+    fields.statsSummary.textContent = [
+      `本页隐藏 ${pageStats.total}`,
+      `会话 ${sessionStats.hidden}`,
+      `规则 ${ruleCount}（名 ${compiledRules.blockedNameKeywords.length} / 评 ${compiledRules.blockedTextKeywords.length}）`,
+    ].join(" · ");
   }
 
   function formatHitBreakdown(byType) {
@@ -617,15 +603,20 @@
   async function refreshRemoteRulesIfNeeded({ forceCheck = false } = {}) {
     if (!settings.remoteRulesEnabled) return;
     const now = Date.now();
-    if (!forceCheck && now - lastRemoteCheckAt < 60 * 1000) return;
+    if (!forceCheck && now - lastRemoteCheckAt < 5 * 60 * 1000) return;
     lastRemoteCheckAt = now;
 
     const intervalMs = settings.remoteUpdateIntervalHours * 60 * 60 * 1000;
     const updatedAt = Number(settings.remoteCache?.updatedAt) || 0;
     const failedAt = Number(settings.remoteCache?.failedAt) || 0;
-    const retryMs = Math.min(intervalMs, 30 * 60 * 1000);
+    const error = String(settings.remoteCache?.error || "");
+    const rateLimited = /\b429\b|Too Many Requests/i.test(error);
+    // 普通失败 2 小时后再试；429 限流则至少隔 6 小时，避免反复打 GitHub。
+    const retryMs = rateLimited
+      ? Math.max(6 * 60 * 60 * 1000, Math.min(intervalMs, 12 * 60 * 60 * 1000))
+      : Math.min(intervalMs, 2 * 60 * 60 * 1000);
 
-    // 成功缓存未过期则跳过；若上次全失败，则按较短间隔重试。
+    // 成功缓存未过期则跳过；若上次失败，则按失败类型退避重试。
     if (updatedAt && now - updatedAt < intervalMs) {
       if (!failedAt || now - failedAt < retryMs) return;
     } else if (!updatedAt && failedAt && now - failedAt < retryMs) {
@@ -642,8 +633,8 @@
     remoteRefreshPromise = (async () => {
       const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
       const [namesResult, textsResult] = await Promise.all([
-        fetchRemoteLists(settings.remoteNameKeywordUrls, cache.blockedNameKeywords),
-        fetchRemoteLists(settings.remoteTextKeywordUrls, cache.blockedTextKeywords),
+        fetchRemoteLists(settings.remoteNameKeywordUrls, cache.blockedNameKeywords, { force }),
+        fetchRemoteLists(settings.remoteTextKeywordUrls, cache.blockedTextKeywords, { force }),
       ]);
       const results = [namesResult, textsResult];
       const errors = results.flatMap((result) => result.errors);
@@ -694,7 +685,7 @@
     }
   }
 
-  async function fetchRemoteLists(urls, fallbackItems = []) {
+  async function fetchRemoteLists(urls, fallbackItems = [], { force = false } = {}) {
     const cleanUrls = uniqueList(urls);
     if (!cleanUrls.length) {
       return {
@@ -705,7 +696,7 @@
       };
     }
 
-    const results = await Promise.allSettled(cleanUrls.map(fetchText));
+    const results = await Promise.allSettled(cleanUrls.map((url) => fetchText(url, { force })));
     const responses = [];
     const errors = [];
 
@@ -734,11 +725,11 @@
     };
   }
 
-  function fetchText(url) {
+  function fetchText(url, { force = false } = {}) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: "GET",
-        url: withCacheBuster(url),
+        url: force ? withCacheBuster(url) : url,
         timeout: 15000,
         onload: (response) => {
           if (response.status >= 200 && response.status < 300) {
@@ -762,16 +753,37 @@
     const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
     const updatedAt = Number(cache.updatedAt) || 0;
     const failedAt = Number(cache.failedAt) || 0;
-    const counts = [
-      `显示名关键词 ${normalizeList(cache.blockedNameKeywords).length} 条`,
-      `评论关键词 ${normalizeList(cache.blockedTextKeywords).length} 条`,
-    ].join("，");
+    const nameCount = normalizeList(cache.blockedNameKeywords).length;
+    const textCount = normalizeList(cache.blockedTextKeywords).length;
+    const cacheText = `缓存 名${nameCount}/评${textCount}`;
 
-    if (!settings.remoteRulesEnabled) return `远程订阅已停用。缓存：${counts}`;
-    if (cache.error && failedAt && !updatedAt) return `上次更新失败：${cache.error}。当前缓存：${counts}`;
-    if (cache.error && failedAt && updatedAt) return `部分订阅失败：${cache.error}。当前缓存：${counts}`;
-    if (!updatedAt) return `尚未成功更新远程规则。当前缓存：${counts}`;
-    return `远程规则上次更新：${new Date(updatedAt).toLocaleString()}。缓存：${counts}`;
+    if (!settings.remoteRulesEnabled) return `远程已停用 · ${cacheText}`;
+    if (cache.error && failedAt) {
+      const shortError = shortenRemoteError(cache.error);
+      if (!updatedAt) return `更新失败：${shortError} · ${cacheText}`;
+      return `部分失败：${shortError} · ${cacheText}`;
+    }
+    if (!updatedAt) return `尚未更新 · ${cacheText}`;
+    return `更新于 ${formatRelativeTime(updatedAt)} · ${cacheText}`;
+  }
+
+  function shortenRemoteError(error) {
+    const text = String(error || "");
+    if (/\b429\b/.test(text)) return "GitHub 限流(429)，稍后再试";
+    if (text.length <= 48) return text;
+    return `${text.slice(0, 45)}...`;
+  }
+
+  function formatRelativeTime(timestamp) {
+    const delta = Date.now() - Number(timestamp);
+    if (!Number.isFinite(delta) || delta < 0) return new Date(timestamp).toLocaleString();
+    const minutes = Math.floor(delta / 60000);
+    if (minutes < 1) return "刚刚";
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return `${hours} 小时前`;
+    const days = Math.floor(hours / 24);
+    return `${days} 天前`;
   }
 
   function observePage() {
@@ -1153,7 +1165,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 20px;
+        padding: 16px;
         background: rgba(0, 0, 0, 0.58);
         color: var(--xcsf-text);
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -1161,11 +1173,13 @@
 
       .xcsf-panel {
         box-sizing: border-box;
-        width: min(680px, 100%);
-        max-height: min(860px, calc(100vh - 40px));
-        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        width: min(720px, 100%);
+        max-height: calc(100vh - 32px);
+        overflow: hidden;
         border: 1px solid var(--xcsf-border);
-        border-radius: 8px;
+        border-radius: 10px;
         background: var(--xcsf-bg);
         box-shadow: 0 18px 60px rgba(0, 0, 0, 0.48);
       }
@@ -1173,180 +1187,191 @@
       .xcsf-header,
       .xcsf-footer {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: space-between;
-        gap: 12px;
-        padding: 16px;
+        gap: 10px;
+        flex: 0 0 auto;
+        padding: 12px 14px;
+      }
+
+      .xcsf-header {
         border-bottom: 1px solid var(--xcsf-border);
       }
 
       .xcsf-footer {
         border-top: 1px solid var(--xcsf-border);
-        border-bottom: 0;
+      }
+
+      .xcsf-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 12px 14px;
+        overflow: auto;
       }
 
       .xcsf-title {
-        font-size: 20px;
+        font-size: 17px;
         font-weight: 700;
-        line-height: 1.25;
+        line-height: 1.2;
       }
 
       .xcsf-subtitle {
-        margin-top: 4px;
+        margin-top: 2px;
         color: var(--xcsf-muted);
-        font-size: 14px;
-        line-height: 1.4;
+        font-size: 12px;
+        line-height: 1.35;
       }
 
-      .xcsf-controls,
-      .xcsf-field,
-      .xcsf-status,
-      .xcsf-stats,
-      .xcsf-json {
-        display: grid;
-        gap: 10px;
-        margin: 16px;
-      }
-
-      .xcsf-status {
+      .xcsf-toolbar {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 10px 12px;
-        border: 1px solid var(--xcsf-border);
-        border-radius: 6px;
-        background: color-mix(in srgb, var(--xcsf-accent) 12%, transparent);
-        color: var(--xcsf-muted);
-        font-size: 14px;
-        line-height: 1.45;
-      }
-
-      .xcsf-status > span {
-        min-width: 0;
-        flex: 1;
-      }
-
-      .xcsf-stats {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-      }
-
-      .xcsf-stats > div {
-        display: grid;
-        gap: 2px;
-        padding: 10px 12px;
-        border: 1px solid var(--xcsf-border);
-        border-radius: 6px;
-        background: var(--xcsf-bg-muted);
-      }
-
-      .xcsf-stats strong {
-        color: var(--xcsf-text);
-        font-size: 20px;
-        line-height: 1.1;
-      }
-
-      .xcsf-stats span,
-      .xcsf-stats small,
-      .xcsf-dirty {
-        color: var(--xcsf-muted);
-        font-size: 13px;
-      }
-
-      .xcsf-stats small {
-        min-height: 18px;
-      }
-
-      .xcsf-controls {
-        padding: 12px;
+        gap: 8px 12px;
+        padding: 8px 10px;
         border: 1px solid var(--xcsf-border);
         border-radius: 8px;
         background: var(--xcsf-bg-muted);
       }
 
-      .xcsf-check,
-      .xcsf-select-label {
+      .xcsf-meta {
         display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        color: var(--xcsf-text);
-        font-size: 14px;
+        flex-wrap: wrap;
+        gap: 6px 12px;
+        color: var(--xcsf-muted);
+        font-size: 12px;
+        line-height: 1.4;
       }
 
-      .xcsf-check {
-        justify-content: flex-start;
+      .xcsf-meta > span {
+        min-width: 0;
+      }
+
+      .xcsf-keywords {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        flex: 1 1 auto;
+        min-height: 180px;
+      }
+
+      .xcsf-field {
+        display: grid;
+        gap: 6px;
+        min-height: 0;
+      }
+
+      .xcsf-keywords .xcsf-field {
+        grid-template-rows: auto minmax(0, 1fr);
+        height: 100%;
       }
 
       .xcsf-field > span,
-      .xcsf-json > summary,
+      .xcsf-advanced > summary,
       .xcsf-select-label > span {
         color: var(--xcsf-text);
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 700;
       }
 
+      .xcsf-check,
+      .xcsf-select-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--xcsf-text);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+
+      .xcsf-select-label select,
       .xcsf-field textarea,
-      .xcsf-json textarea,
-      .xcsf-select-label select {
+      .xcsf-advanced textarea {
         box-sizing: border-box;
-        width: 100%;
         border: 1px solid var(--xcsf-border);
         border-radius: 6px;
         background: var(--xcsf-field-bg);
         color: var(--xcsf-text);
-        font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         outline: none;
       }
 
+      .xcsf-select-label select {
+        min-width: 108px;
+        padding: 4px 8px;
+        font: 13px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .xcsf-field textarea,
+      .xcsf-advanced textarea {
+        width: 100%;
+        min-height: 0;
+        resize: vertical;
+        padding: 8px;
+        font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .xcsf-keywords textarea {
+        height: 100%;
+        min-height: 160px;
+      }
+
+      .xcsf-advanced {
+        border-top: 1px solid var(--xcsf-border);
+        padding-top: 4px;
+      }
+
+      .xcsf-advanced > summary {
+        cursor: pointer;
+        user-select: none;
+        padding: 4px 0;
+      }
+
+      .xcsf-advanced[open] {
+        display: grid;
+        gap: 8px;
+      }
+
+      .xcsf-advanced-grid {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 12px;
+      }
+
+      .xcsf-advanced textarea {
+        min-height: 52px;
+      }
+
       .xcsf-field textarea:focus,
-      .xcsf-json textarea:focus,
+      .xcsf-advanced textarea:focus,
       .xcsf-select-label select:focus,
       .xcsf-panel button:focus-visible {
         border-color: var(--xcsf-accent);
         box-shadow: 0 0 0 2px color-mix(in srgb, var(--xcsf-accent) 35%, transparent);
       }
 
-      .xcsf-field textarea,
-      .xcsf-json textarea {
-        min-height: 92px;
-        resize: vertical;
-        padding: 10px;
-      }
-
-      .xcsf-json textarea {
-        min-height: 150px;
-      }
-
-      .xcsf-select-label select {
-        max-width: 280px;
-        padding: 8px 10px;
-      }
-
       .xcsf-row,
-      .xcsf-footer-main,
-      .xcsf-status-actions {
+      .xcsf-footer-main {
         display: flex;
         justify-content: flex-end;
         gap: 8px;
       }
 
-      .xcsf-nested-field {
-        margin: 10px 0 0;
-      }
-
-      .xcsf-nested-field textarea {
-        min-height: 58px;
+      .xcsf-dirty {
+        color: var(--xcsf-muted);
+        font-size: 12px;
       }
 
       .xcsf-panel button {
-        min-height: 36px;
-        padding: 0 14px;
+        min-height: 32px;
+        padding: 0 12px;
         border: 1px solid rgb(83, 100, 113);
         border-radius: 6px;
         background: transparent;
         color: var(--xcsf-text);
-        font: 14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font: 13px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         cursor: pointer;
       }
 
@@ -1363,11 +1388,11 @@
 
       .xcsf-icon-button {
         flex: 0 0 auto;
-        width: 42px;
-        min-height: 42px !important;
+        width: 34px;
+        min-height: 34px !important;
         padding: 0 !important;
         border-radius: 8px !important;
-        font-size: 28px !important;
+        font-size: 22px !important;
         line-height: 1 !important;
       }
 
@@ -1382,28 +1407,46 @@
         }
       }
 
-      @media (max-width: 560px) {
+      @media (max-width: 640px) {
         .xcsf-overlay {
           align-items: stretch;
-          padding: 10px;
+          padding: 8px;
+        }
+
+        .xcsf-panel {
+          max-height: calc(100vh - 16px);
+        }
+
+        .xcsf-keywords {
+          grid-template-columns: 1fr;
+          min-height: 0;
+        }
+
+        .xcsf-keywords textarea {
+          min-height: 110px;
+          height: 110px;
         }
 
         .xcsf-header,
         .xcsf-footer,
         .xcsf-footer-main,
-        .xcsf-status,
-        .xcsf-status-actions,
-        .xcsf-select-label {
+        .xcsf-toolbar {
           align-items: stretch;
+        }
+
+        .xcsf-footer,
+        .xcsf-footer-main {
           flex-direction: column;
         }
 
-        .xcsf-select-label select {
-          max-width: none;
+        .xcsf-select-label {
+          width: 100%;
+          justify-content: space-between;
         }
 
-        .xcsf-stats {
-          grid-template-columns: 1fr;
+        .xcsf-select-label select {
+          min-width: 0;
+          flex: 1;
         }
       }
     `;
