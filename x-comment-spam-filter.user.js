@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.4.0
-// @description  按用户名、显示名关键词、评论内容关键词隐藏 X/Twitter 评论区垃圾回复。
+// @version      1.5.0
+// @description  按显示名关键词、评论内容关键词批量隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
 // @icon         https://abs.twimg.com/favicons/twitter.3.ico
@@ -34,12 +34,8 @@
     skipMainTweetOnStatusPage: true,
     remoteRulesEnabled: true,
     remoteUpdateIntervalHours: 12,
-    blockedHandles: [],
     blockedNameKeywords: [],
     blockedTextKeywords: [],
-    remoteHandleUrls: [
-      `${DEFAULT_RAW_BASE}/lists/handles.txt`,
-    ],
     remoteNameKeywordUrls: [
       `${DEFAULT_RAW_BASE}/lists/name-keywords.txt`,
     ],
@@ -50,7 +46,6 @@
       updatedAt: 0,
       failedAt: 0,
       error: "",
-      blockedHandles: [],
       blockedNameKeywords: [],
       blockedTextKeywords: [],
     },
@@ -93,25 +88,30 @@
   }
 
   function normalizeSettings(value) {
+    const remoteCacheSource = value.remoteCache || {};
+    // 旧版 @用户名 字段在迁移时直接丢弃，不再读写。
     const remoteCache = {
-      ...DEFAULT_SETTINGS.remoteCache,
-      ...(value.remoteCache || {}),
-      blockedHandles: normalizeList(value.remoteCache?.blockedHandles),
-      blockedNameKeywords: normalizeList(value.remoteCache?.blockedNameKeywords),
-      blockedTextKeywords: normalizeList(value.remoteCache?.blockedTextKeywords),
+      updatedAt: Number(remoteCacheSource.updatedAt) || 0,
+      failedAt: Number(remoteCacheSource.failedAt) || 0,
+      error: String(remoteCacheSource.error || ""),
+      blockedNameKeywords: normalizeList(remoteCacheSource.blockedNameKeywords),
+      blockedTextKeywords: normalizeList(remoteCacheSource.blockedTextKeywords),
     };
 
     return {
-      ...DEFAULT_SETTINGS,
-      ...value,
+      enabled: value.enabled !== false,
       hideMode: value.hideMode === "placeholder" ? "placeholder" : "remove",
+      skipMainTweetOnStatusPage: value.skipMainTweetOnStatusPage !== false,
+      remoteRulesEnabled: value.remoteRulesEnabled !== false,
       remoteUpdateIntervalHours: Number(value.remoteUpdateIntervalHours) || DEFAULT_SETTINGS.remoteUpdateIntervalHours,
-      blockedHandles: normalizeList(value.blockedHandles),
       blockedNameKeywords: normalizeList(value.blockedNameKeywords),
       blockedTextKeywords: normalizeList(value.blockedTextKeywords),
-      remoteHandleUrls: normalizeList(value.remoteHandleUrls),
-      remoteNameKeywordUrls: normalizeList(value.remoteNameKeywordUrls),
-      remoteTextKeywordUrls: normalizeList(value.remoteTextKeywordUrls),
+      remoteNameKeywordUrls: Array.isArray(value.remoteNameKeywordUrls)
+        ? normalizeList(value.remoteNameKeywordUrls)
+        : [...DEFAULT_SETTINGS.remoteNameKeywordUrls],
+      remoteTextKeywordUrls: Array.isArray(value.remoteTextKeywordUrls)
+        ? normalizeList(value.remoteTextKeywordUrls)
+        : [...DEFAULT_SETTINGS.remoteTextKeywordUrls],
       remoteCache,
     };
   }
@@ -119,10 +119,6 @@
   function buildEffectiveRules(value) {
     const remoteCache = value.remoteRulesEnabled ? value.remoteCache : DEFAULT_SETTINGS.remoteCache;
     return {
-      blockedHandles: uniqueList([
-        ...normalizeList(value.blockedHandles),
-        ...normalizeList(remoteCache.blockedHandles),
-      ]),
       blockedNameKeywords: uniqueList([
         ...normalizeList(value.blockedNameKeywords),
         ...normalizeList(remoteCache.blockedNameKeywords),
@@ -135,9 +131,6 @@
   }
 
   function compileRules(rules, value) {
-    const blockedHandles = new Set(normalizeList(rules.blockedHandles)
-      .map(normalizeHandle)
-      .filter(Boolean));
     const blockedNameKeywords = compileKeywords(rules.blockedNameKeywords);
     const blockedTextKeywords = compileKeywords(rules.blockedTextKeywords);
     const signature = [
@@ -146,13 +139,11 @@
       value.skipMainTweetOnStatusPage,
       value.remoteRulesEnabled,
       value.remoteCache?.updatedAt || 0,
-      [...blockedHandles].join("|"),
       blockedNameKeywords.map((item) => item.normalized).join("|"),
       blockedTextKeywords.map((item) => item.normalized).join("|"),
     ].join("::");
 
     return {
-      blockedHandles,
       blockedNameKeywords,
       blockedTextKeywords,
       signature,
@@ -167,9 +158,15 @@
       const normalized = normalizeText(raw);
       if (!normalized || seen.has(normalized)) continue;
       seen.add(normalized);
-      result.push({ raw, normalized });
+      result.push({
+        raw,
+        normalized,
+        compact: compactText(normalized),
+      });
     }
 
+    // 更长关键词优先，命中原因更具体，也减少短词抢先匹配。
+    result.sort((a, b) => b.normalized.length - a.normalized.length || a.normalized.localeCompare(b.normalized));
     return result;
   }
 
@@ -228,8 +225,7 @@
     fullScanRequested = true;
     scanPendingArticles();
     const pageStats = collectPageStats();
-    const ruleCount = compiledRules.blockedHandles.size
-      + compiledRules.blockedNameKeywords.length
+    const ruleCount = compiledRules.blockedNameKeywords.length
       + compiledRules.blockedTextKeywords.length;
 
     alert([
@@ -237,7 +233,7 @@
       "",
       `当前页隐藏：${pageStats.total}（${formatHitBreakdown(pageStats.byType)}）`,
       `本次会话命中：${sessionStats.hidden}（${formatHitBreakdown(sessionStats.byType)}）`,
-      `启用规则：${ruleCount}（用户名 ${compiledRules.blockedHandles.size} / 显示名 ${compiledRules.blockedNameKeywords.length} / 内容 ${compiledRules.blockedTextKeywords.length}）`,
+      `启用规则：${ruleCount}（显示名 ${compiledRules.blockedNameKeywords.length} / 内容 ${compiledRules.blockedTextKeywords.length}）`,
       `扫描文章：${sessionStats.scanned}`,
       `跳过文章：${sessionStats.skipped}`,
       `远程状态：${formatRemoteStatus()}`,
@@ -254,7 +250,7 @@
         <div class="xcsf-header">
           <div>
             <div class="xcsf-title">XGuard 推特评论净化器</div>
-            <div class="xcsf-subtitle">本地规则每行一条；远程订阅支持多个 URL，每行一个。</div>
+            <div class="xcsf-subtitle">按显示名 / 评论关键词批量过滤；本地规则每行一条，远程订阅可配置多个 URL。</div>
           </div>
           <button class="xcsf-icon-button" type="button" data-action="close" aria-label="关闭">×</button>
         </div>
@@ -317,26 +313,17 @@
         </div>
 
         <label class="xcsf-field">
-          <span>本地屏蔽 @用户名</span>
-          <textarea data-field="blockedHandles" spellcheck="false" placeholder="@spam_user"></textarea>
-        </label>
-
-        <label class="xcsf-field">
           <span>本地屏蔽显示名关键词</span>
-          <textarea data-field="blockedNameKeywords" spellcheck="false" placeholder="线下&#10;上门"></textarea>
+          <textarea data-field="blockedNameKeywords" spellcheck="false" placeholder="线下&#10;上门&#10;点击主页"></textarea>
         </label>
 
         <label class="xcsf-field">
           <span>本地屏蔽评论内容关键词</span>
-          <textarea data-field="blockedTextKeywords" spellcheck="false" placeholder="telegram&#10;whatsapp"></textarea>
+          <textarea data-field="blockedTextKeywords" spellcheck="false" placeholder="telegram&#10;whatsapp&#10;领空投"></textarea>
         </label>
 
         <details class="xcsf-json" open>
-          <summary>远程订阅列表 URL</summary>
-          <label class="xcsf-field xcsf-nested-field">
-            <span>远程 @用户名列表 URL</span>
-            <textarea data-field="remoteHandleUrls" spellcheck="false" rows="2"></textarea>
-          </label>
+          <summary>远程关键词订阅 URL</summary>
           <label class="xcsf-field xcsf-nested-field">
             <span>远程显示名关键词列表 URL</span>
             <textarea data-field="remoteNameKeywordUrls" spellcheck="false" rows="2"></textarea>
@@ -377,10 +364,8 @@
     fields.remoteRulesEnabled.checked = settings.remoteRulesEnabled;
     fields.hideMode.value = settings.hideMode;
     fields.remoteUpdateIntervalHours.value = String(settings.remoteUpdateIntervalHours);
-    fields.blockedHandles.value = normalizeList(settings.blockedHandles).join("\n");
     fields.blockedNameKeywords.value = normalizeList(settings.blockedNameKeywords).join("\n");
     fields.blockedTextKeywords.value = normalizeList(settings.blockedTextKeywords).join("\n");
-    fields.remoteHandleUrls.value = normalizeList(settings.remoteHandleUrls).join("\n");
     fields.remoteNameKeywordUrls.value = normalizeList(settings.remoteNameKeywordUrls).join("\n");
     fields.remoteTextKeywordUrls.value = normalizeList(settings.remoteTextKeywordUrls).join("\n");
     fields.remoteStatus.textContent = formatRemoteStatus();
@@ -417,7 +402,7 @@
       if (action === "import-json") importJsonFromPanel(overlay);
     });
 
-    fields.blockedHandles.focus();
+    fields.blockedNameKeywords.focus();
   }
 
   function getPanelFields(root) {
@@ -427,10 +412,8 @@
       remoteRulesEnabled: root.querySelector('[data-field="remoteRulesEnabled"]'),
       hideMode: root.querySelector('[data-field="hideMode"]'),
       remoteUpdateIntervalHours: root.querySelector('[data-field="remoteUpdateIntervalHours"]'),
-      blockedHandles: root.querySelector('[data-field="blockedHandles"]'),
       blockedNameKeywords: root.querySelector('[data-field="blockedNameKeywords"]'),
       blockedTextKeywords: root.querySelector('[data-field="blockedTextKeywords"]'),
-      remoteHandleUrls: root.querySelector('[data-field="remoteHandleUrls"]'),
       remoteNameKeywordUrls: root.querySelector('[data-field="remoteNameKeywordUrls"]'),
       remoteTextKeywordUrls: root.querySelector('[data-field="remoteTextKeywordUrls"]'),
       remoteStatus: root.querySelector('[data-field="remoteStatus"]'),
@@ -454,10 +437,8 @@
       remoteRulesEnabled: fields.remoteRulesEnabled.checked,
       hideMode: fields.hideMode.value,
       remoteUpdateIntervalHours: Number(fields.remoteUpdateIntervalHours.value) || DEFAULT_SETTINGS.remoteUpdateIntervalHours,
-      blockedHandles: parseList(fields.blockedHandles.value),
       blockedNameKeywords: parseList(fields.blockedNameKeywords.value),
       blockedTextKeywords: parseList(fields.blockedTextKeywords.value),
-      remoteHandleUrls: parseList(fields.remoteHandleUrls.value),
       remoteNameKeywordUrls: parseList(fields.remoteNameKeywordUrls.value),
       remoteTextKeywordUrls: parseList(fields.remoteTextKeywordUrls.value),
     };
@@ -482,10 +463,8 @@
     fields.remoteRulesEnabled.checked = DEFAULT_SETTINGS.remoteRulesEnabled;
     fields.hideMode.value = DEFAULT_SETTINGS.hideMode;
     fields.remoteUpdateIntervalHours.value = String(DEFAULT_SETTINGS.remoteUpdateIntervalHours);
-    fields.blockedHandles.value = DEFAULT_SETTINGS.blockedHandles.join("\n");
     fields.blockedNameKeywords.value = DEFAULT_SETTINGS.blockedNameKeywords.join("\n");
     fields.blockedTextKeywords.value = DEFAULT_SETTINGS.blockedTextKeywords.join("\n");
-    fields.remoteHandleUrls.value = DEFAULT_SETTINGS.remoteHandleUrls.join("\n");
     fields.remoteNameKeywordUrls.value = DEFAULT_SETTINGS.remoteNameKeywordUrls.join("\n");
     fields.remoteTextKeywordUrls.value = DEFAULT_SETTINGS.remoteTextKeywordUrls.join("\n");
     fields.remoteStatus.textContent = "面板已恢复默认值，保存后生效。";
@@ -551,8 +530,7 @@
 
     const fields = getPanelFields(root);
     const pageStats = collectPageStats();
-    const ruleCount = compiledRules.blockedHandles.size
-      + compiledRules.blockedNameKeywords.length
+    const ruleCount = compiledRules.blockedNameKeywords.length
       + compiledRules.blockedTextKeywords.length;
 
     fields.pageHiddenCount.textContent = String(pageStats.total);
@@ -560,11 +538,11 @@
     fields.ruleCount.textContent = String(ruleCount);
     fields.pageBreakdown.textContent = formatHitBreakdown(pageStats.byType);
     fields.sessionBreakdown.textContent = formatHitBreakdown(sessionStats.byType);
-    fields.ruleBreakdown.textContent = `用户名 ${compiledRules.blockedHandles.size} / 显示名 ${compiledRules.blockedNameKeywords.length} / 内容 ${compiledRules.blockedTextKeywords.length}`;
+    fields.ruleBreakdown.textContent = `显示名 ${compiledRules.blockedNameKeywords.length} / 内容 ${compiledRules.blockedTextKeywords.length}`;
   }
 
   function formatHitBreakdown(byType) {
-    return `用户名 ${byType.handle} / 显示名 ${byType.name} / 内容 ${byType.text}`;
+    return `显示名 ${byType.name} / 内容 ${byType.text}`;
   }
 
   async function updateRemoteFromPanel(root) {
@@ -585,13 +563,11 @@
     const fields = getPanelFields(root);
     const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
     const result = {
-      handles: removeDuplicates(parseList(fields.blockedHandles.value), cache.blockedHandles),
       names: removeDuplicates(parseList(fields.blockedNameKeywords.value), cache.blockedNameKeywords),
       texts: removeDuplicates(parseList(fields.blockedTextKeywords.value), cache.blockedTextKeywords),
     };
-    const removedCount = result.handles.removed + result.names.removed + result.texts.removed;
+    const removedCount = result.names.removed + result.texts.removed;
 
-    fields.blockedHandles.value = result.handles.items.join("\n");
     fields.blockedNameKeywords.value = result.names.items.join("\n");
     fields.blockedTextKeywords.value = result.texts.items.join("\n");
     fields.jsonRules.value = JSON.stringify(readSettingsFromPanel(root), null, 2);
@@ -665,12 +641,11 @@
 
     remoteRefreshPromise = (async () => {
       const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
-      const [handlesResult, namesResult, textsResult] = await Promise.all([
-        fetchRemoteLists(settings.remoteHandleUrls, cache.blockedHandles),
+      const [namesResult, textsResult] = await Promise.all([
         fetchRemoteLists(settings.remoteNameKeywordUrls, cache.blockedNameKeywords),
         fetchRemoteLists(settings.remoteTextKeywordUrls, cache.blockedTextKeywords),
       ]);
-      const results = [handlesResult, namesResult, textsResult];
+      const results = [namesResult, textsResult];
       const errors = results.flatMap((result) => result.errors);
       const attempted = results.filter((result) => result.attempted);
       const anySuccess = attempted.some((result) => result.ok);
@@ -701,14 +676,13 @@
           updatedAt: Date.now(),
           failedAt: errors.length ? Date.now() : 0,
           error: errors.join("；"),
-          blockedHandles: handlesResult.items,
           blockedNameKeywords: namesResult.items,
           blockedTextKeywords: textsResult.items,
         },
       });
 
       if (notify) {
-        const message = `远程规则已更新：@用户名 ${handlesResult.items.length} 条，显示名关键词 ${namesResult.items.length} 条，评论关键词 ${textsResult.items.length} 条。`;
+        const message = `远程规则已更新：显示名关键词 ${namesResult.items.length} 条，评论关键词 ${textsResult.items.length} 条。`;
         alert(errors.length ? `${message}\n部分订阅失败：${errors.join("；")}` : message);
       }
     })();
@@ -789,7 +763,6 @@
     const updatedAt = Number(cache.updatedAt) || 0;
     const failedAt = Number(cache.failedAt) || 0;
     const counts = [
-      `@用户名 ${normalizeList(cache.blockedHandles).length} 条`,
       `显示名关键词 ${normalizeList(cache.blockedNameKeywords).length} 条`,
       `评论关键词 ${normalizeList(cache.blockedTextKeywords).length} 条`,
     ].join("，");
@@ -960,17 +933,10 @@
   }
 
   function getBlockMatch(article) {
-    const author = extractAuthor(article);
+    const displayName = extractDisplayName(article);
     const text = normalizeText(extractTweetText(article));
 
-    if (author.handle && compiledRules.blockedHandles.has(author.handle)) {
-      return {
-        type: "handle",
-        text: `命中用户名 ${author.handle}`,
-      };
-    }
-
-    const nameKeyword = findCompiledKeyword(author.displayName, compiledRules.blockedNameKeywords);
+    const nameKeyword = findCompiledKeyword(displayName, compiledRules.blockedNameKeywords);
     if (nameKeyword) {
       return {
         type: "name",
@@ -989,33 +955,16 @@
     return null;
   }
 
-  function extractAuthor(article) {
+  function extractDisplayName(article) {
     const userName = getOwnUserNameRoot(article);
-    if (!userName) return { displayName: "", handle: "" };
-
-    const handleFromLink = Array.from(userName.querySelectorAll('a[href^="/"]'))
-      .map((link) => {
-        const href = link.getAttribute("href") || "";
-        const match = href.match(/^\/([A-Za-z0-9_]{1,15})(?:\/|$)/);
-        if (!match) return "";
-        const candidate = match[1].toLowerCase();
-        if (["home", "explore", "search", "settings", "i", "intent", "messages", "notifications"].includes(candidate)) {
-          return "";
-        }
-        return `@${candidate}`;
-      })
-      .find(Boolean);
-
-    const handleFromText = Array.from(userName.querySelectorAll("span"))
-      .map((node) => node.textContent.trim())
-      .find((text) => /^@\w{1,15}$/i.test(text));
+    if (!userName) return "";
 
     const displayNameLink = userName.querySelector('a[href^="/"]');
+    // 优先取显示名链接文本；若拿不到，再回退到 User-Name 区域，但去掉 @handle 文本。
+    if (displayNameLink) return normalizeText(textWithEmojiAlt(displayNameLink));
 
-    return {
-      displayName: normalizeText(textWithEmojiAlt(displayNameLink || userName)),
-      handle: normalizeHandle(handleFromLink || handleFromText || ""),
-    };
+    const raw = textWithEmojiAlt(userName);
+    return normalizeText(raw.replace(/@\w{1,15}/gi, " "));
   }
 
   function extractTweetText(article) {
@@ -1042,15 +991,6 @@
     return parts.join(" ");
   }
 
-  function normalizeHandle(value) {
-    const handle = String(value)
-      .replace(ZERO_WIDTH_RE, "")
-      .trim()
-      .replace(/^@?/, "@")
-      .toLowerCase();
-    return /^@\w{1,15}$/.test(handle) ? handle : "";
-  }
-
   function normalizeText(value) {
     return String(value)
       .normalize("NFKC")
@@ -1060,9 +1000,22 @@
       .toLowerCase();
   }
 
+  function compactText(value) {
+    return normalizeText(value).replace(/[\s\p{P}\p{S}]+/gu, "");
+  }
+
   function findCompiledKeyword(text, keywords) {
     const haystack = normalizeText(text);
-    return keywords.find((keyword) => haystack.includes(keyword.normalized));
+    if (!haystack || !keywords.length) return null;
+
+    const direct = keywords.find((keyword) => haystack.includes(keyword.normalized));
+    if (direct) return direct;
+
+    // 对去掉空格/标点后的文本再匹配一次，降低「领 空 投」「t.e.l.e.g.r.a.m」这类绕过。
+    // 仅对长度 >= 2 的关键词启用，避免过短词误伤。
+    const compactHaystack = compactText(haystack);
+    if (!compactHaystack) return null;
+    return keywords.find((keyword) => keyword.compact.length >= 2 && compactHaystack.includes(keyword.compact)) || null;
   }
 
   function hideArticle(article, match) {
@@ -1116,7 +1069,6 @@
       skipped: 0,
       hidden: 0,
       byType: {
-        handle: 0,
         name: 0,
         text: 0,
       },
@@ -1138,7 +1090,6 @@
     const stats = {
       total: 0,
       byType: {
-        handle: 0,
         name: 0,
         text: 0,
       },

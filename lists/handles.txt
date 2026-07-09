@@ -1,6 +1,0 @@
-# XGuard Reply Filter - blocked @handles
-# One handle per line. Lines starting with # are ignored.
-# Keep this list conservative. Public third-party handle blocklists can easily
-# misidentify real users, so confirmed handles should be added manually.
-
-@Joeyce_x2
