@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.5.3
-// @description  按显示名关键词、评论内容关键词批量隐藏 X/Twitter 评论区垃圾回复。
+// @version      1.6.0
+// @description  用远程规则 + 本地关键词，批量隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
 // @icon         data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAB7ElEQVR4Ae1XMZLCMAwUdw0ldJQ8ATpKnkBJByUd8ALyA/gBdJTQUtHS8QT4AaRM5ctmThmfogQ75CYNmhGTbGJr45Vk0yAiQzXaF9VsHwIZAofDgYwxqo9GI/K16/X6cqyxvdVqmdvtZh6PhwmCIHXcw7vdrpFj8ny9XhsYxhe8lwWHw2EycLFYpNh0Ok2w8/nsFHy1WrkE1wnAN5tNMkGv10ux3W6XIab5fD5P3ovldCGrP2Ap4LiW8uRJAcIwe1wpArYU0FJimhQgxaQ9cqX4BZYCgSVmS8HBfRP1JQEsY1xKGSmAcTC+l0QrIWDraicVMBBA4O1265ScpQnAMbkMwphjub1HAI7EkxoDK7n0/gQQGATsCmDMo+z++Hf8E5CjPZ9PiqKIZrMZhWFIl8slxcbjMTWbTTqdTuRrXoz5i2WXRIL+WxWw2+Uml13rnJUT4K9E9nMFaF3SxiojoO1u2rJzl4z3/+oIcHBMLiUp2rDe3ozg+BIYtNee87KjGzLGndPx7JD/0K7xog2Gl30ymaSY1jm9CPhsrXnnBK1zOhHgCWWtF7l2TtA6p3S1E+73exoMBrRcLul4PJKL3e93arfbSUeMA1O/36eYPHU6nWQu7pyaqRlfZnezV05anhSN34va7PPXrHYCP+VaTG3LBV1KAAAAAElFTkSuQmCC
@@ -101,7 +101,7 @@
     return {
       enabled: value.enabled !== false,
       hideMode: value.hideMode === "placeholder" ? "placeholder" : "remove",
-      skipMainTweetOnStatusPage: value.skipMainTweetOnStatusPage !== false,
+      skipMainTweetOnStatusPage: true,
       remoteRulesEnabled: value.remoteRulesEnabled !== false,
       remoteUpdateIntervalHours: normalizeUpdateIntervalHours(value.remoteUpdateIntervalHours),
       blockedNameKeywords: normalizeList(value.blockedNameKeywords),
@@ -203,50 +203,10 @@
   }
 
   function registerMenu() {
-    GM_registerMenuCommand("打开过滤设置", openSettingsPanel);
-    GM_registerMenuCommand("查看过滤统计", showStatsSummary);
-
-    GM_registerMenuCommand("启用/停用过滤", () => {
-      const enabled = !settings.enabled;
-      saveSettings({ ...settings, enabled });
-      alert(`XGuard 推特评论净化器：已${enabled ? "启用" : "停用"}`);
-    });
-
-    GM_registerMenuCommand("切换隐藏模式", () => {
-      const hideMode = settings.hideMode === "remove" ? "placeholder" : "remove";
-      saveSettings({ ...settings, hideMode });
-      alert(`隐藏模式：${hideMode === "remove" ? "直接隐藏" : "显示占位提示"}`);
-    });
-
-    GM_registerMenuCommand("立即更新远程规则", async () => {
+    GM_registerMenuCommand("打开设置", openSettingsPanel);
+    GM_registerMenuCommand("更新远程规则", async () => {
       await refreshRemoteRules({ force: true, notify: true });
     });
-
-    GM_registerMenuCommand("恢复默认规则", () => {
-      if (confirm("确定要恢复默认过滤规则吗？")) {
-        saveSettings({ ...DEFAULT_SETTINGS });
-      }
-    });
-  }
-
-  function showStatsSummary() {
-    clearTimeout(scanTimer);
-    fullScanRequested = true;
-    scanPendingArticles();
-    const pageStats = collectPageStats();
-    const ruleCount = compiledRules.blockedNameKeywords.length
-      + compiledRules.blockedTextKeywords.length;
-
-    alert([
-      "XGuard 过滤统计",
-      "",
-      `当前页隐藏：${pageStats.total}（${formatHitBreakdown(pageStats.byType)}）`,
-      `本次会话命中：${sessionStats.hidden}（${formatHitBreakdown(sessionStats.byType)}）`,
-      `启用规则：${ruleCount}（显示名 ${compiledRules.blockedNameKeywords.length} / 内容 ${compiledRules.blockedTextKeywords.length}）`,
-      `扫描文章：${sessionStats.scanned}`,
-      `跳过文章：${sessionStats.skipped}`,
-      `远程状态：${formatRemoteStatus()}`,
-    ].join("\n"));
   }
 
   function openSettingsPanel() {
@@ -255,11 +215,11 @@
     const overlay = document.createElement("div");
     overlay.className = "xcsf-overlay";
     overlay.innerHTML = `
-      <div class="xcsf-panel" role="dialog" aria-modal="true" aria-label="XGuard 推特评论净化器设置">
+      <div class="xcsf-panel" role="dialog" aria-modal="true" aria-label="XGuard 设置">
         <div class="xcsf-header">
           <div>
             <div class="xcsf-title">XGuard 设置</div>
-            <div class="xcsf-subtitle">显示名 / 评论关键词，每行一条</div>
+            <div class="xcsf-subtitle">远程规则自动过滤，本地关键词按需补充</div>
           </div>
           <button class="xcsf-icon-button" type="button" data-action="close" aria-label="关闭">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -276,7 +236,7 @@
             </label>
             <label class="xcsf-check">
               <input type="checkbox" data-field="remoteRulesEnabled">
-              <span>远程订阅</span>
+              <span>远程规则</span>
             </label>
             <label class="xcsf-select-label">
               <span>隐藏</span>
@@ -285,7 +245,7 @@
                 <option value="placeholder">占位可展开</option>
               </select>
             </label>
-            <button type="button" data-action="update-remote">更新规则</button>
+            <button type="button" data-action="update-remote">更新远程规则</button>
           </div>
 
           <div class="xcsf-meta" aria-live="polite">
@@ -295,47 +255,27 @@
 
           <div class="xcsf-keywords">
             <label class="xcsf-field">
-              <span>显示名关键词</span>
+              <span>显示名关键词 <em>（本地）</em></span>
               <textarea data-field="blockedNameKeywords" spellcheck="false" placeholder="线下&#10;上门&#10;点击主页"></textarea>
             </label>
             <label class="xcsf-field">
-              <span>评论关键词</span>
+              <span>评论关键词 <em>（本地）</em></span>
               <textarea data-field="blockedTextKeywords" spellcheck="false" placeholder="telegram&#10;whatsapp&#10;领空投"></textarea>
             </label>
           </div>
 
+          <p class="xcsf-hint">每行一条。本地规则会与远程规则合并；远程已有的不必重复添加。</p>
+
           <details class="xcsf-advanced">
-            <summary>高级选项</summary>
-            <div class="xcsf-advanced-grid">
-              <label class="xcsf-check">
-                <input type="checkbox" data-field="skipMainTweetOnStatusPage">
-                <span>详情页跳过主推文</span>
-              </label>
-              <label class="xcsf-select-label">
-                <span>自动更新</span>
-                <select data-field="remoteUpdateIntervalHours">
-                  <option value="24">每天</option>
-                  <option value="168">每周</option>
-                </select>
-              </label>
-              <button type="button" data-action="dedupe-local">清理与远程重复的本地规则</button>
-            </div>
+            <summary>自定义远程列表 URL</summary>
             <label class="xcsf-field">
-              <span>远程显示名列表 URL</span>
+              <span>显示名列表</span>
               <textarea data-field="remoteNameKeywordUrls" spellcheck="false" rows="2"></textarea>
             </label>
             <label class="xcsf-field">
-              <span>远程评论列表 URL</span>
+              <span>评论列表</span>
               <textarea data-field="remoteTextKeywordUrls" spellcheck="false" rows="2"></textarea>
             </label>
-            <label class="xcsf-field">
-              <span>导入 / 导出 JSON</span>
-              <textarea data-field="jsonRules" spellcheck="false" rows="4"></textarea>
-            </label>
-            <div class="xcsf-row">
-              <button type="button" data-action="refresh-json">刷新导出</button>
-              <button type="button" data-action="import-json">从 JSON 导入</button>
-            </div>
           </details>
         </div>
 
@@ -356,16 +296,13 @@
 
     const fields = getPanelFields(overlay);
     fields.enabled.checked = settings.enabled;
-    fields.skipMainTweetOnStatusPage.checked = settings.skipMainTweetOnStatusPage;
     fields.remoteRulesEnabled.checked = settings.remoteRulesEnabled;
     fields.hideMode.value = settings.hideMode;
-    fields.remoteUpdateIntervalHours.value = String(settings.remoteUpdateIntervalHours);
     fields.blockedNameKeywords.value = normalizeList(settings.blockedNameKeywords).join("\n");
     fields.blockedTextKeywords.value = normalizeList(settings.blockedTextKeywords).join("\n");
     fields.remoteNameKeywordUrls.value = normalizeList(settings.remoteNameKeywordUrls).join("\n");
     fields.remoteTextKeywordUrls.value = normalizeList(settings.remoteTextKeywordUrls).join("\n");
     fields.remoteStatus.textContent = formatRemoteStatus();
-    fields.jsonRules.value = JSON.stringify(settings, null, 2);
     updatePanelStats(overlay);
 
     overlay.addEventListener("click", (event) => {
@@ -391,11 +328,6 @@
       if (action === "save") saveFromPanel(overlay);
       if (action === "reset") resetPanelFields(overlay);
       if (action === "update-remote") updateRemoteFromPanel(overlay);
-      if (action === "dedupe-local") dedupeLocalRulesFromPanel(overlay);
-      if (action === "refresh-json") {
-        getPanelFields(overlay).jsonRules.value = JSON.stringify(readSettingsFromPanel(overlay), null, 2);
-      }
-      if (action === "import-json") importJsonFromPanel(overlay);
     });
 
     fields.blockedNameKeywords.focus();
@@ -404,16 +336,13 @@
   function getPanelFields(root) {
     return {
       enabled: root.querySelector('[data-field="enabled"]'),
-      skipMainTweetOnStatusPage: root.querySelector('[data-field="skipMainTweetOnStatusPage"]'),
       remoteRulesEnabled: root.querySelector('[data-field="remoteRulesEnabled"]'),
       hideMode: root.querySelector('[data-field="hideMode"]'),
-      remoteUpdateIntervalHours: root.querySelector('[data-field="remoteUpdateIntervalHours"]'),
       blockedNameKeywords: root.querySelector('[data-field="blockedNameKeywords"]'),
       blockedTextKeywords: root.querySelector('[data-field="blockedTextKeywords"]'),
       remoteNameKeywordUrls: root.querySelector('[data-field="remoteNameKeywordUrls"]'),
       remoteTextKeywordUrls: root.querySelector('[data-field="remoteTextKeywordUrls"]'),
       remoteStatus: root.querySelector('[data-field="remoteStatus"]'),
-      jsonRules: root.querySelector('[data-field="jsonRules"]'),
       statsSummary: root.querySelector('[data-field="statsSummary"]'),
       dirtyNotice: root.querySelector('[data-field="dirtyNotice"]'),
     };
@@ -424,10 +353,10 @@
     return {
       ...settings,
       enabled: fields.enabled.checked,
-      skipMainTweetOnStatusPage: fields.skipMainTweetOnStatusPage.checked,
       remoteRulesEnabled: fields.remoteRulesEnabled.checked,
       hideMode: fields.hideMode.value,
-      remoteUpdateIntervalHours: normalizeUpdateIntervalHours(fields.remoteUpdateIntervalHours.value),
+      skipMainTweetOnStatusPage: true,
+      remoteUpdateIntervalHours: 24,
       blockedNameKeywords: parseList(fields.blockedNameKeywords.value),
       blockedTextKeywords: parseList(fields.blockedTextKeywords.value),
       remoteNameKeywordUrls: parseList(fields.remoteNameKeywordUrls.value),
@@ -446,35 +375,18 @@
   }
 
   function resetPanelFields(root) {
-    if (!confirm("确定要把面板中的规则恢复为默认值吗？")) return;
+    if (!confirm("确定要恢复默认设置吗？本地关键词会被清空。")) return;
 
     const fields = getPanelFields(root);
     fields.enabled.checked = DEFAULT_SETTINGS.enabled;
-    fields.skipMainTweetOnStatusPage.checked = DEFAULT_SETTINGS.skipMainTweetOnStatusPage;
     fields.remoteRulesEnabled.checked = DEFAULT_SETTINGS.remoteRulesEnabled;
     fields.hideMode.value = DEFAULT_SETTINGS.hideMode;
-    fields.remoteUpdateIntervalHours.value = String(DEFAULT_SETTINGS.remoteUpdateIntervalHours);
-    fields.blockedNameKeywords.value = DEFAULT_SETTINGS.blockedNameKeywords.join("\n");
-    fields.blockedTextKeywords.value = DEFAULT_SETTINGS.blockedTextKeywords.join("\n");
+    fields.blockedNameKeywords.value = "";
+    fields.blockedTextKeywords.value = "";
     fields.remoteNameKeywordUrls.value = DEFAULT_SETTINGS.remoteNameKeywordUrls.join("\n");
     fields.remoteTextKeywordUrls.value = DEFAULT_SETTINGS.remoteTextKeywordUrls.join("\n");
-    fields.remoteStatus.textContent = "面板已恢复默认值，保存后生效。";
-    fields.jsonRules.value = JSON.stringify(DEFAULT_SETTINGS, null, 2);
+    fields.remoteStatus.textContent = "已恢复默认，保存后生效。";
     markPanelDirty(root);
-  }
-
-  function importJsonFromPanel(root) {
-    const fields = getPanelFields(root);
-    try {
-      const imported = JSON.parse(fields.jsonRules.value);
-      saveSettings({
-        ...DEFAULT_SETTINGS,
-        ...imported,
-      });
-      closePanel(root);
-    } catch (error) {
-      alert(`导入失败：${error.message}`);
-    }
   }
 
   function closePanel(root) {
@@ -527,12 +439,8 @@
     fields.statsSummary.textContent = [
       `本页隐藏 ${pageStats.total}`,
       `会话 ${sessionStats.hidden}`,
-      `规则 ${ruleCount}（名 ${compiledRules.blockedNameKeywords.length} / 评 ${compiledRules.blockedTextKeywords.length}）`,
+      `规则 ${ruleCount}`,
     ].join(" · ");
-  }
-
-  function formatHitBreakdown(byType) {
-    return `显示名 ${byType.name} / 内容 ${byType.text}`;
   }
 
   async function updateRemoteFromPanel(root) {
@@ -541,49 +449,11 @@
     root.dataset.dirty = "false";
     fields.dirtyNotice.hidden = true;
     fields.remoteStatus.textContent = "正在更新远程规则...";
-    await refreshRemoteRules({ force: true, notify: false });
+    const result = await refreshRemoteRules({ force: true, notify: false });
     if (document.contains(root)) {
-      fields.remoteStatus.textContent = formatRemoteStatus();
-      fields.jsonRules.value = JSON.stringify(settings, null, 2);
+      fields.remoteStatus.textContent = result?.message || formatRemoteStatus();
       updatePanelStats(root);
     }
-  }
-
-  function dedupeLocalRulesFromPanel(root) {
-    const fields = getPanelFields(root);
-    const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
-    const result = {
-      names: removeDuplicates(parseList(fields.blockedNameKeywords.value), cache.blockedNameKeywords),
-      texts: removeDuplicates(parseList(fields.blockedTextKeywords.value), cache.blockedTextKeywords),
-    };
-    const removedCount = result.names.removed + result.texts.removed;
-
-    fields.blockedNameKeywords.value = result.names.items.join("\n");
-    fields.blockedTextKeywords.value = result.texts.items.join("\n");
-    fields.jsonRules.value = JSON.stringify(readSettingsFromPanel(root), null, 2);
-    markPanelDirty(root);
-
-    if (removedCount) {
-      fields.remoteStatus.textContent = `已移除 ${removedCount} 条与远程缓存重复的本地规则，点击“保存规则”后生效。`;
-    } else {
-      fields.remoteStatus.textContent = "未发现与远程缓存重复的本地规则。";
-    }
-  }
-
-  function removeDuplicates(localItems, remoteItems) {
-    const remoteSet = new Set(normalizeList(remoteItems).map(normalizeText));
-    const items = [];
-    let removed = 0;
-
-    for (const item of normalizeList(localItems)) {
-      if (remoteSet.has(normalizeText(item))) {
-        removed += 1;
-        continue;
-      }
-      items.push(item);
-    }
-
-    return { items, removed };
   }
 
   function parseList(value) {
@@ -631,14 +501,19 @@
   }
 
   async function refreshRemoteRules({ force = false, notify = false } = {}) {
-    if (!settings.remoteRulesEnabled && !force) return;
+    if (!settings.remoteRulesEnabled && !force) {
+      return { ok: false, message: "远程规则已停用。" };
+    }
     if (remoteRefreshPromise) return remoteRefreshPromise;
 
     remoteRefreshPromise = (async () => {
       const cache = settings.remoteCache || DEFAULT_SETTINGS.remoteCache;
+      const beforeNames = normalizeList(cache.blockedNameKeywords);
+      const beforeTexts = normalizeList(cache.blockedTextKeywords);
+
       const [namesResult, textsResult] = await Promise.all([
-        fetchRemoteLists(settings.remoteNameKeywordUrls, cache.blockedNameKeywords, { force }),
-        fetchRemoteLists(settings.remoteTextKeywordUrls, cache.blockedTextKeywords, { force }),
+        fetchRemoteLists(settings.remoteNameKeywordUrls, beforeNames, { force }),
+        fetchRemoteLists(settings.remoteTextKeywordUrls, beforeTexts, { force }),
       ]);
       const results = [namesResult, textsResult];
       const errors = results.flatMap((result) => result.errors);
@@ -646,8 +521,9 @@
       const anySuccess = attempted.some((result) => result.ok);
 
       if (!attempted.length) {
-        if (notify) alert("未配置任何远程订阅 URL。");
-        return;
+        const message = "未配置任何远程列表 URL。";
+        if (notify) alert(message);
+        return { ok: false, message };
       }
 
       if (!anySuccess) {
@@ -659,11 +535,16 @@
             error: errors.join("；") || "远程规则更新失败",
           },
         });
-        if (notify) {
-          alert(`远程规则更新失败，已保留上次缓存。\n${errors.join("；")}`);
-        }
-        return;
+        const message = `更新失败，已保留上次缓存。\n${errors.join("；")}`;
+        if (notify) alert(message);
+        return { ok: false, message };
       }
+
+      const nameDiff = diffKeywordLists(beforeNames, namesResult.items);
+      const textDiff = diffKeywordLists(beforeTexts, textsResult.items);
+      const added = nameDiff.added + textDiff.added;
+      const removed = nameDiff.removed + textDiff.removed;
+      const total = nameDiff.total + textDiff.total;
 
       saveSettings({
         ...settings,
@@ -676,17 +557,42 @@
         },
       });
 
-      if (notify) {
-        const message = `远程规则已更新：显示名关键词 ${namesResult.items.length} 条，评论关键词 ${textsResult.items.length} 条。`;
-        alert(errors.length ? `${message}\n部分订阅失败：${errors.join("；")}` : message);
+      let message;
+      if (added || removed) {
+        const parts = [];
+        if (added) parts.push(`新增 ${added} 条`);
+        if (removed) parts.push(`移除 ${removed} 条`);
+        message = `远程规则已更新：${parts.join("，")}（显示名 ${nameDiff.total} / 评论 ${textDiff.total}，共 ${total} 条）`;
+      } else {
+        message = `远程规则已是最新：共 ${total} 条，无变化`;
       }
+      if (errors.length) message += `\n部分订阅失败：${errors.join("；")}`;
+
+      if (notify) alert(message);
+      return { ok: true, message, added, removed, total };
     })();
 
     try {
-      await remoteRefreshPromise;
+      return await remoteRefreshPromise;
     } finally {
       remoteRefreshPromise = null;
     }
+  }
+
+  function diffKeywordLists(beforeItems, afterItems) {
+    const beforeSet = new Set(normalizeList(beforeItems).map(normalizeText));
+    const afterSet = new Set(normalizeList(afterItems).map(normalizeText));
+    let added = 0;
+    let removed = 0;
+
+    for (const item of afterSet) {
+      if (!beforeSet.has(item)) added += 1;
+    }
+    for (const item of beforeSet) {
+      if (!afterSet.has(item)) removed += 1;
+    }
+
+    return { added, removed, total: afterSet.size };
   }
 
   async function fetchRemoteLists(urls, fallbackItems = [], { force = false } = {}) {
@@ -1253,6 +1159,19 @@
         min-width: 0;
       }
 
+      .xcsf-hint {
+        margin: 0;
+        color: var(--xcsf-muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .xcsf-field > span em {
+        color: var(--xcsf-muted);
+        font-style: normal;
+        font-weight: 500;
+      }
+
       .xcsf-keywords {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1337,13 +1256,6 @@
         gap: 8px;
       }
 
-      .xcsf-advanced-grid {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 8px 12px;
-      }
-
       .xcsf-advanced textarea {
         min-height: 52px;
       }
@@ -1356,7 +1268,6 @@
         box-shadow: 0 0 0 2px color-mix(in srgb, var(--xcsf-accent) 35%, transparent);
       }
 
-      .xcsf-row,
       .xcsf-footer-main {
         display: flex;
         justify-content: flex-end;
