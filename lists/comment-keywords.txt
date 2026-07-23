@@ -28,6 +28,7 @@ tg群
 陪我
 🍌
 无偿
+寻固炮
 
 # Social / link bait patterns seen in public GitHub muted-word lists
 telegram
