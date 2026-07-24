@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.6.0
+// @version      1.6.1
 // @description  用远程规则 + 本地关键词，批量隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -1032,6 +1032,11 @@
   function addStyle() {
     const style = document.createElement("style");
     style.textContent = `
+      /* 连同虚拟列表外层一起隐藏，避免 article 被去掉后留下带边框的空 cell */
+      [data-testid="cellInnerDiv"]:has(article[${HIDDEN_ATTR}="remove"]) {
+        display: none !important;
+      }
+
       article[${HIDDEN_ATTR}="remove"] {
         display: none !important;
       }
