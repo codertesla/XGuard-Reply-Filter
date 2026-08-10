@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.6.1
+// @version      1.6.2
 // @description  用远程规则 + 本地关键词，批量隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -53,6 +53,10 @@
 
   const PLACEHOLDER_TEXT = "已由 XGuard 推特评论净化器隐藏";
   const ZERO_WIDTH_RE = /[\u200B-\u200D\uFEFF\u2060\u180E]/g;
+  // 回复推文正文上方固定渲染「Replying to @xxx」行；用它区分「评论」与「原创推文」。
+  // 收藏夹、首页原创推文、搜索/个人主页等非评论内容不含此标记，一律不处理。
+  // 不包含裸「回复」二字，避免中文 UI 与正文误判。
+  const REPLY_CONTEXT_RE = /(replying to|responding a|répondre à|en réponse à|antwort an|rispondendo a|respondendo a|в ответ|返信先|回覆)/i;
   let settings = loadSettings();
   let effectiveRules = buildEffectiveRules(settings);
   let compiledRules = compileRules(effectiveRules, settings);
@@ -851,7 +855,14 @@
     if (article.parentElement?.closest('article[role="article"]')) return true;
     if (article.getAttribute(MAIN_TWEET_ATTR) === "true") return true;
     if (article.querySelector('[data-testid="placementTracking"]')) return true;
+    // 只处理回复（评论），原创推文、收藏夹条目等一律跳过，避免误伤非评论内容。
+    if (!isReplyArticle(article)) return true;
     return !getOwnUserNameRoot(article) && !getOwnTweetTextRoot(article);
+  }
+
+  function isReplyArticle(article) {
+    if (article.querySelector('[data-testid="replyContext"]')) return true;
+    return REPLY_CONTEXT_RE.test(article.textContent);
   }
 
   function getBlockMatch(article) {
