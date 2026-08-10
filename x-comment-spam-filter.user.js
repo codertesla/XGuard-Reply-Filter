@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.6.2
+// @version      1.6.3
 // @description  用远程规则 + 本地关键词，批量隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -53,8 +53,8 @@
 
   const PLACEHOLDER_TEXT = "已由 XGuard 推特评论净化器隐藏";
   const ZERO_WIDTH_RE = /[\u200B-\u200D\uFEFF\u2060\u180E]/g;
-  // 回复推文正文上方固定渲染「Replying to @xxx」行；用它区分「评论」与「原创推文」。
-  // 收藏夹、首页原创推文、搜索/个人主页等非评论内容不含此标记，一律不处理。
+  // 非详情页（首页/搜索/收藏夹）下，用「Replying to @xxx」行区分「评论」与「原创推文」。
+  // 该标记可能渲染在 article 内部，也可能在 article 之外的外层 cell 容器里。
   // 不包含裸「回复」二字，避免中文 UI 与正文误判。
   const REPLY_CONTEXT_RE = /(replying to|responding a|répondre à|en réponse à|antwort an|rispondendo a|respondendo a|в ответ|返信先|回覆)/i;
   let settings = loadSettings();
@@ -861,8 +861,15 @@
   }
 
   function isReplyArticle(article) {
-    if (article.querySelector('[data-testid="replyContext"]')) return true;
-    return REPLY_CONTEXT_RE.test(article.textContent);
+    // 推文详情页：main 内除主推文外的推文均为回复评论。
+    // 新版 X UI 把「Replying to @xxx」渲染在 article 之外的 cell 容器中，
+    // 只查 article 子树会漏掉真评论（正文无关键词但显示名含关键词的机器人）。
+    if (isStatusPage() && article.closest("main")) return true;
+
+    // 首页/搜索/收藏夹等非详情页：回复标记可能在 article 内部，也可能在外层 cell 容器。
+    const scope = article.closest('[data-testid="cellInnerDiv"]') || article.parentElement || article;
+    if (scope.querySelector('[data-testid="replyContext"]')) return true;
+    return REPLY_CONTEXT_RE.test(scope.textContent);
   }
 
   function getBlockMatch(article) {
