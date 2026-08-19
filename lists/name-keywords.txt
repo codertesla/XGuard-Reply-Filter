@@ -52,3 +52,6 @@ VPN
 Visa领取
 Visa卡
 可领
+
+# 屏蔽 AI 号
+AI
