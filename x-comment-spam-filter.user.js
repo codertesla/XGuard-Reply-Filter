@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         XGuard 推特评论净化器
 // @namespace    https://github.com/codertesla/XGuard-Reply-Filter
-// @version      1.6.3
+// @version      1.6.4
 // @description  用远程规则 + 本地关键词，批量隐藏 X/Twitter 评论区垃圾回复。
 // @author       sos
 // @license      MIT
@@ -829,10 +829,24 @@
     const statusId = getCurrentStatusId();
     const articles = Array.from(document.querySelectorAll('main article[role="article"]'))
       .filter((article) => !article.parentElement?.closest('article[role="article"]'));
-    const mainArticle = articles.find((article) => articleLinksToStatus(article, statusId)) || articles[0];
-    if (mainArticle) mainArticle.setAttribute(MAIN_TWEET_ATTR, "true");
-    const changed = currentMainTweetArticle !== mainArticle;
-    currentMainTweetArticle = mainArticle || null;
+    const focalIndex = articles.findIndex((article) => articleLinksToStatus(article, statusId));
+
+    if (focalIndex !== -1) {
+      // 详情页中，当前 URL 目标推文及其上方所有的前置/上级原推全部视为主对话链予以保护，避免误伤
+      for (let i = 0; i <= focalIndex; i++) {
+        articles[i].setAttribute(MAIN_TWEET_ATTR, "true");
+      }
+      const focalArticle = articles[focalIndex];
+      const changed = currentMainTweetArticle !== focalArticle;
+      currentMainTweetArticle = focalArticle;
+      return changed;
+    }
+
+    if (articles[0]) {
+      articles[0].setAttribute(MAIN_TWEET_ATTR, "true");
+    }
+    const changed = currentMainTweetArticle !== (articles[0] || null);
+    currentMainTweetArticle = articles[0] || null;
     return changed;
   }
 
@@ -861,7 +875,7 @@
   }
 
   function isReplyArticle(article) {
-    // 推文详情页：main 内除主推文外的推文均为回复评论。
+    // 推文详情页：main 内除主推文与前置上下文链之外的推文均为回复评论。
     // 新版 X UI 把「Replying to @xxx」渲染在 article 之外的 cell 容器中，
     // 只查 article 子树会漏掉真评论（正文无关键词但显示名含关键词的机器人）。
     if (isStatusPage() && article.closest("main")) return true;
