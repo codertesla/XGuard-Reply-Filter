@@ -83,11 +83,6 @@ airdrop
 air drop
 claim airdrop
 free mint
-pump.fun
-.pump
-memecoin
-degen
-BNB
 XBT
 contract address
 wallet address
