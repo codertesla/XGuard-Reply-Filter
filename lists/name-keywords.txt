@@ -31,7 +31,7 @@
 男用
 
 # 屏蔽 AI 号
-AI
+
 
 # Crypto / giveaway spam identity markers
 airdrop
