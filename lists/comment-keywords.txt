@@ -78,7 +78,7 @@ onlyfans
 fansly
 
 # Crypto spam patterns from public Twitter/X blocklist policies and muted-word lists
-bitcoin
+# bitcoin
 dogecoin
 FTX
 airdrop
